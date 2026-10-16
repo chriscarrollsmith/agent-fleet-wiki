@@ -7,3 +7,4 @@ bookstack.pem
 logs/
 command-history.txt
 deploy/users/
+bookstack.env
