@@ -8,3 +8,4 @@ logs/
 command-history.txt
 deploy/users/
 bookstack.env
+__pycache__/
