@@ -7,6 +7,7 @@
 # Usage:
 #   bash deploy/create-user.sh --name "Cursor Agent" --email "cursor-agent@promptlytechnologies.com"
 #   bash deploy/create-user.sh --name "Cursor Agent" --email "cursor-agent@example.com" --role Agent
+#   bash deploy/create-user.sh --sync-role
 #
 # Credentials are printed once and written to deploy/users/ (gitignored).
 set -euo pipefail
@@ -16,14 +17,19 @@ load_env
 NAME=""
 EMAIL=""
 ROLE="Agent"
+SYNC=0
 
 usage() {
   cat <<'EOF'
 Usage: bash deploy/create-user.sh --name NAME --email EMAIL [--role ROLE]
+       bash deploy/create-user.sh --sync-role [--role ROLE]
 
 Creates a BookStack user on the deployed instance and an API token.
-The default role is Agent: a copy of Editor plus the access-api permission.
-If ROLE already exists it is reused, and it must already have access-api.
+The default role is Agent: a copy of Editor, plus access-api and the
+attachment upload permissions the API requires.
+
+--sync-role adds those permissions to an existing role. It does not
+create a user or print a new token.
 EOF
 }
 
@@ -41,6 +47,10 @@ while [[ $# -gt 0 ]]; do
       ROLE="${2:-}"
       shift 2
       ;;
+    --sync-role)
+      SYNC=1
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -53,7 +63,12 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -z "$NAME" || -z "$EMAIL" || -z "$ROLE" ]]; then
+if [[ -z "$ROLE" ]]; then
+  usage >&2
+  exit 1
+fi
+
+if [[ "$SYNC" -eq 0 && ( -z "$NAME" || -z "$EMAIL" ) ]]; then
   usage >&2
   exit 1
 fi
@@ -68,7 +83,7 @@ if [[ "$NAME" =~ [[:cntrl:]] || "$EMAIL" =~ [[:cntrl:]] || "$ROLE" =~ [[:cntrl:]
   exit 1
 fi
 
-if [[ ! "$EMAIL" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]]; then
+if [[ "$SYNC" -eq 0 && ! "$EMAIL" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]]; then
   echo "Email looks invalid: ${EMAIL}" >&2
   exit 1
 fi
@@ -89,18 +104,14 @@ json_escape() {
   printf '%s' "$out"
 }
 
-PASSWORD="$(generate_password)"
-if [[ ${#PASSWORD} -lt 16 ]]; then
-  echo "Could not generate a password." >&2
-  exit 1
+PASSWORD=""
+if [[ "$SYNC" -eq 0 ]]; then
+  PASSWORD="$(generate_password)"
+  if [[ ${#PASSWORD} -lt 16 ]]; then
+    echo "Could not generate a password." >&2
+    exit 1
+  fi
 fi
-
-users_dir="$ROOT/deploy/users"
-mkdir -p "$users_dir"
-chmod 700 "$users_dir"
-
-safe_email="$(printf '%s' "$EMAIL" | tr -c 'A-Za-z0-9._@-' '_')"
-out_file="$users_dir/${safe_email}.env"
 
 payload="$(mktemp)"
 chmod 600 "$payload"
@@ -109,13 +120,17 @@ cleanup_local() {
 }
 trap cleanup_local EXIT
 
-printf '{"name":"%s","email":"%s","password":"%s","role":"%s"}\n' \
-  "$(json_escape "$NAME")" \
-  "$(json_escape "$EMAIL")" \
-  "$(json_escape "$PASSWORD")" \
-  "$(json_escape "$ROLE")" > "$payload"
+if [[ "$SYNC" -eq 1 ]]; then
+  printf '{"mode":"sync-role","role":"%s"}\n' "$(json_escape "$ROLE")" > "$payload"
+else
+  printf '{"mode":"create","name":"%s","email":"%s","password":"%s","role":"%s"}\n' \
+    "$(json_escape "$NAME")" \
+    "$(json_escape "$EMAIL")" \
+    "$(json_escape "$PASSWORD")" \
+    "$(json_escape "$ROLE")" > "$payload"
+fi
 
-remote_id="$(printf '%s' "$PASSWORD" | cut -c1-8)"
+remote_id="$(generate_password | cut -c1-8)"
 remote_php="/tmp/create-bookstack-user-${remote_id}.php"
 remote_json="/tmp/create-bookstack-user-${remote_id}.json"
 
@@ -140,6 +155,35 @@ sudo -u www-data php "$php_file" /var/www/bookstack "$json_file"
 REMOTE
 )"
 
+if [[ "$SYNC" -eq 1 ]]; then
+  role="" role_id="" added=""
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    case "$line" in
+      role=*|role_id=*|added=*)
+        key=${line%%=*}
+        val=${line#*=}
+        printf -v "$key" '%s' "$val"
+        ;;
+      *)
+        echo "Unexpected response from BookStack: ${line}" >&2
+        exit 1
+        ;;
+    esac
+  done <<< "$output"
+
+  for key in role role_id added; do
+    if [[ -z "${!key}" ]]; then
+      echo "BookStack did not return ${key}." >&2
+      exit 1
+    fi
+  done
+
+  echo "Updated role ${role} (id ${role_id})."
+  echo "Added permissions: ${added}"
+  exit 0
+fi
+
 user_id="" email="" name="" role="" role_id="" password="" token_id="" token_secret="" authorization=""
 while IFS= read -r line; do
   [[ -z "$line" ]] && continue
@@ -162,6 +206,12 @@ for key in user_id email name role role_id password token_id token_secret author
     exit 1
   fi
 done
+
+users_dir="$ROOT/deploy/users"
+mkdir -p "$users_dir"
+chmod 700 "$users_dir"
+safe_email="$(printf '%s' "$EMAIL" | tr -c 'A-Za-z0-9._@-' '_')"
+out_file="$users_dir/${safe_email}.env"
 
 umask 077
 {
