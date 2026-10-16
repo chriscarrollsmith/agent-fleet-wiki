@@ -39,8 +39,8 @@ those. Registration stays closed.
 
 ```bash
 bash deploy/create-user.sh \
-  --name "Cursor Agent" \
-  --email "cursor-agent@promptlytechnologies.com"
+  --name "Agent User" \
+  --email "agent-user@example.com"
 ```
 
 The password and `Authorization: Token <id>:<secret>` line are printed once
