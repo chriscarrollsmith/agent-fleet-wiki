@@ -27,3 +27,24 @@ bash deploy/run.sh --from 05  # resume from a stage
 Stages are idempotent, so re-running is safe. Generated artifacts
 (`deploy/bookstack.pem`, `deploy/bookstack-s3.env`) and the admin password
 (added to `.env` as `ADMIN_PASSWORD`) are gitignored.
+
+## 4. Create an agent user
+
+BookStack does not ship a command for a normal user or an API token.
+`deploy/create-user.sh` creates both on the instance. The default role,
+Agent, is a copy of Editor plus `access-api`, which the API requires.
+Registration stays closed.
+
+```bash
+bash deploy/create-user.sh \
+  --name "Cursor Agent" \
+  --email "cursor-agent@promptlytechnologies.com"
+```
+
+The password and `Authorization: Token <id>:<secret>` line are printed once
+and written under `deploy/users/`, which is gitignored. Re-running the same
+email fails, because the user already exists. An existing `--role` is reused
+only when that role already has `access-api`.
+
+The new user can see books the Editor role can see. A book with its own
+permission list must include the Agent role or the API will not see it.
