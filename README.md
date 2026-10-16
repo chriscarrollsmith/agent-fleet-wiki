@@ -32,8 +32,10 @@ Stages are idempotent, so re-running is safe. Generated artifacts
 
 BookStack does not ship a command for a normal user or an API token.
 `deploy/create-user.sh` creates both on the instance. The default role,
-Agent, is a copy of Editor plus `access-api`, which the API requires.
-Registration stays closed.
+Agent, is a copy of Editor plus `access-api` and the attachment
+permissions the API requires (`attachment-create-all`,
+`attachment-update-all`, `attachment-delete-all`). Editor does not have
+those. Registration stays closed.
 
 ```bash
 bash deploy/create-user.sh \
@@ -45,6 +47,13 @@ The password and `Authorization: Token <id>:<secret>` line are printed once
 and written under `deploy/users/`, which is gitignored. Re-running the same
 email fails, because the user already exists. An existing `--role` is reused
 only when that role already has `access-api`.
+
+An existing Agent role can be given those permissions without creating
+another user:
+
+```bash
+bash deploy/create-user.sh --sync-role
+```
 
 The new user can see books the Editor role can see. A book with its own
 permission list must include the Agent role or the API will not see it.
