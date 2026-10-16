@@ -6,3 +6,4 @@ bookstack-s3.env
 bookstack.pem
 logs/
 command-history.txt
+deploy/users/
