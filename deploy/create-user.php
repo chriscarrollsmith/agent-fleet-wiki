@@ -177,15 +177,15 @@ function ensure_agent_role(string $roleName): BookStack\Users\Models\Role
 
     return app(BookStack\Permissions\PermissionsRepo::class)->saveNewRole([
         'display_name' => $roleName,
-        'description' => 'Fleet agent. Editor content permissions, API access, and attachment uploads.',
+        'description' => 'Fleet agent. Editor content permissions, plus API, export, attachment, image, and comment access.',
         'external_auth_id' => '',
         'permissions' => $permissions,
     ]);
 }
 
 /**
- * Permissions the attachments API checks for. Editor does not have the
- * attachment "all" permissions; a fresh install grants those to Admin only.
+ * Permissions a research agent needs beyond a plain Editor role.
+ * A fresh install grants attachment and comment permissions to Admin only.
  *
  * @return array<int, string>
  */
@@ -193,9 +193,16 @@ function agent_api_permissions(): array
 {
     return [
         'access-api',
+        'content-export',
         'attachment-create-all',
         'attachment-update-all',
         'attachment-delete-all',
+        'image-create-all',
+        'image-update-own',
+        'image-delete-own',
+        'comment-create-all',
+        'comment-update-own',
+        'comment-delete-own',
     ];
 }
 

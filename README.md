@@ -32,10 +32,10 @@ Stages are idempotent, so re-running is safe. Generated artifacts
 
 BookStack does not ship a command for a normal user or an API token.
 `deploy/create-user.sh` creates both on the instance. The default role,
-Agent, is a copy of Editor plus `access-api` and the attachment
-permissions the API requires (`attachment-create-all`,
-`attachment-update-all`, `attachment-delete-all`). Editor does not have
-those. Registration stays closed.
+Agent, is a copy of Editor plus the permissions the API needs for
+normal research work: `access-api`, `content-export`, attachment upload,
+gallery images, and comments. Editor does not have the attachment or
+comment permissions. Registration stays closed.
 
 ```bash
 bash deploy/create-user.sh \
@@ -57,3 +57,36 @@ bash deploy/create-user.sh --sync-role
 
 The new user can see books the Editor role can see. A book with its own
 permission list must include the Agent role or the API will not see it.
+
+## 5. Use the API
+
+`bookstack/bookstack.sh` is the client for an agent user. It needs Python 3.
+Copy `bookstack.env.example` to `bookstack.env` and set the URL and the
+token from `deploy/create-user.sh`. The token file is gitignored.
+
+```bash
+bash bookstack/bookstack.sh --env-file bookstack.env system
+bash bookstack/bookstack.sh --env-file bookstack.env books list --format text
+bash bookstack/bookstack.sh --env-file bookstack.env pages get 3 --field markdown
+bash bookstack/bookstack.sh --env-file bookstack.env pages create \
+  --book 1 --name "Finding" --markdown-file finding.md
+bash bookstack/bookstack.sh --env-file bookstack.env attachments upload \
+  --page 3 --file notes.txt
+bash bookstack/bookstack.sh --env-file bookstack.env attachments get 1 --output notes.txt
+bash bookstack/bookstack.sh --env-file bookstack.env search "capital region" --book 1
+bash bookstack/bookstack.sh --env-file bookstack.env export page 3 --format markdown
+```
+
+`BOOKSTACK_URL` and `BOOKSTACK_TOKEN` in the environment override the env
+file. Run `bash bookstack/bookstack.sh --help` and
+`bash bookstack/bookstack.sh pages --help` for the rest of the commands:
+shelves, books, chapters, pages, attachments, images, comments, tags, and
+export. Listing accepts `--filter field=value`, `--sort`, `--count`, and
+`--offset`.
+
+Comments need `comment-create-all`. A role created before that permission
+was included can gain it, along with image upload, with:
+
+```bash
+bash deploy/create-user.sh --sync-role
+```
