@@ -10,6 +10,8 @@ load_env
 
 KEY_NAME=bookstack
 AMI_PARAM=/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id
+AMI_PARAM="${AMI_PARAM//$'\r'/}"
+echo "Resolving AMI ${AMI_PARAM}"
 
 if [[ -n "${INSTANCE_ID:-}" ]]; then
   state="$(aws_text ec2 describe-instances --instance-ids "$INSTANCE_ID" --query 'Reservations[0].Instances[0].State.Name' || true)"
