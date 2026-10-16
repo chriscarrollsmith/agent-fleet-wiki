@@ -14,16 +14,43 @@ if [[ ! "$BUCKET" =~ ^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$ ]]; then
   exit 1
 fi
 
+create_bucket() {
+  local err
+  err="$(mktemp)"
+  set +e
+  if [[ "$AWS_DEFAULT_REGION" == us-east-1 ]]; then
+    aws s3api create-bucket --bucket "$BUCKET" 2>"$err"
+  else
+    aws s3api create-bucket --bucket "$BUCKET" \
+      --create-bucket-configuration "LocationConstraint=${AWS_DEFAULT_REGION}" 2>"$err"
+  fi
+  local status=$?
+  set -e
+  if [[ "$status" -eq 0 ]]; then
+    rm -f "$err"
+    return 0
+  fi
+  if grep -q BucketAlreadyOwnedByYou "$err"; then
+    echo "Bucket ${BUCKET} is already in this account. Reapplying settings."
+    rm -f "$err"
+    return 0
+  fi
+  if grep -q BucketAlreadyExists "$err"; then
+    echo "The name ${BUCKET} is already taken by another AWS account." >&2
+    echo "S3 bucket names are global. Change BUCKET in .env and re-run this stage." >&2
+    rm -f "$err"
+    exit 1
+  fi
+  cat "$err" >&2
+  rm -f "$err"
+  exit "$status"
+}
+
 if aws s3api head-bucket --bucket "$BUCKET" >/dev/null 2>&1; then
   echo "Bucket ${BUCKET} already exists and is reachable. Reapplying settings."
 else
   echo "Creating bucket ${BUCKET}."
-  if [[ "$AWS_DEFAULT_REGION" == us-east-1 ]]; then
-    aws s3api create-bucket --bucket "$BUCKET"
-  else
-    aws s3api create-bucket --bucket "$BUCKET" \
-      --create-bucket-configuration "LocationConstraint=${AWS_DEFAULT_REGION}"
-  fi
+  create_bucket
 fi
 
 aws s3api put-public-access-block --bucket "$BUCKET" \
