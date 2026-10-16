@@ -5,7 +5,7 @@
 # This uploads a small PHP script and runs it as www-data on the instance.
 #
 # Usage:
-#   bash deploy/create-user.sh --name "Cursor Agent" --email "cursor-agent@promptlytechnologies.com"
+#   bash deploy/create-user.sh --name "Cursor Agent" --email "cursor-agent@example.com"
 #   bash deploy/create-user.sh --name "Cursor Agent" --email "cursor-agent@example.com" --role Agent
 #   bash deploy/create-user.sh --sync-role
 #
