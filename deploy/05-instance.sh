@@ -8,8 +8,8 @@ load_env
 : "${SG:?Run deploy/04-network.sh first}"
 : "${KEY_FILE:?Run deploy/04-network.sh first}"
 
-KEY_NAME=bookstack
-AMI_PARAM=/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id
+KEY_NAME="${KEY_NAME:-bookstack}"
+AMI_PARAM="${AMI_PARAM:-/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id}"
 
 if [[ -n "${INSTANCE_ID:-}" ]]; then
   state="$(aws_text ec2 describe-instances --instance-ids "$INSTANCE_ID" --query 'Reservations[0].Instances[0].State.Name' || true)"
@@ -25,8 +25,8 @@ if [[ -n "${INSTANCE_ID:-}" ]]; then
   fi
 else
   AMI="$(aws_text ssm get-parameter --name "$AMI_PARAM" --query Parameter.Value)"
-  ROOT="$(aws_text ec2 describe-images --image-ids "$AMI" --query 'Images[0].RootDeviceName')"
-  echo "AMI ${AMI}, root device ${ROOT}."
+  ROOT_DEV="$(aws_text ec2 describe-images --image-ids "$AMI" --query 'Images[0].RootDeviceName')"
+  echo "AMI ${AMI}, root device ${ROOT_DEV}."
   INSTANCE_ID="$(aws_text ec2 run-instances \
     --image-id "$AMI" \
     --instance-type t3.small \
@@ -34,7 +34,7 @@ else
     --security-group-ids "$SG" \
     --subnet-id "$SUBNET" \
     --associate-public-ip-address \
-    --block-device-mappings "[{\"DeviceName\":\"${ROOT}\",\"Ebs\":{\"VolumeSize\":30,\"VolumeType\":\"gp3\",\"DeleteOnTermination\":true}}]" \
+    --block-device-mappings "[{\"DeviceName\":\"${ROOT_DEV}\",\"Ebs\":{\"VolumeSize\":30,\"VolumeType\":\"gp3\",\"DeleteOnTermination\":true}}]" \
     --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=bookstack}]" \
     --query 'Instances[0].InstanceId')"
   persist_state

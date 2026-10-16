@@ -2,3 +2,7 @@
 deploy/state.env
 deploy/bookstack-s3.env
 deploy/*.pem
+bookstack-s3.env
+bookstack.pem
+logs/
+command-history.txt

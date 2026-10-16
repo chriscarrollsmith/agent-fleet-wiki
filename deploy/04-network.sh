@@ -5,7 +5,7 @@ source "$(dirname "$0")/lib.sh"
 load_env
 : "${VPC:?Run deploy/01-preflight.sh first}"
 
-KEY_NAME=bookstack
+KEY_NAME="${KEY_NAME:-bookstack}"
 MY_IP="$(curl -fsS https://checkip.amazonaws.com | tr -d '\r')/32"
 
 if aws ec2 describe-key-pairs --key-names "$KEY_NAME" >/dev/null 2>&1; then

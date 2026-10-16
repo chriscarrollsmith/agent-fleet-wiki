@@ -5,7 +5,7 @@ source "$(dirname "$0")/lib.sh"
 load_env
 require BUCKET
 
-USER_NAME=bookstack-attachments
+USER_NAME="${IAM_USER:-bookstack-attachments}"
 
 if aws iam get-user --user-name "$USER_NAME" >/dev/null 2>&1; then
   echo "IAM user ${USER_NAME} already exists. Updating its policy."

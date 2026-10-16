@@ -25,5 +25,8 @@ fi
 
 echo
 echo "Login page:"
-curl -fsS -o /dev/null -w "HTTP %{http_code}\n" "http://${HOST}/login"
+# Avoid passing /dev/null to native curl; MSYS_NO_PATHCONV stops the shell from
+# translating it. Stream the body through tail and keep only the status code.
+code="$(curl -fsS -o - -w '\n%{http_code}' "http://${HOST}/login" | tail -1)"
+echo "HTTP ${code}"
 echo "Default login is still admin@admin.com / password. The next stages replace it."
