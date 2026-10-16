@@ -131,12 +131,26 @@ function ensure_agent_role(string $roleName): BookStack\Users\Models\Role
         return $role;
     }
 
-    $editor = BookStack\Users\Models\Role::getSystemRole('editor');
+    // Only Admin and Public have system_name set. Editor and Viewer are
+    // ordinary roles identified by display name.
+    $editor = BookStack\Users\Models\Role::getSystemRole('editor')
+        ?? BookStack\Users\Models\Role::getRole('Editor');
     if (!$editor) {
-        throw new RuntimeException('The built-in Editor role is missing; cannot clone permissions.');
+        $known = BookStack\Users\Models\Role::query()
+            ->orderBy('id')
+            ->get(['display_name', 'system_name'])
+            ->map(function ($role) {
+                $system = $role->system_name ? " [{$role->system_name}]" : '';
+                return $role->display_name . $system;
+            })
+            ->implode(', ');
+        throw new RuntimeException("No Editor role to clone. Roles on this instance: {$known}");
     }
 
     $permissions = $editor->permissions()->pluck('name')->all();
+    if ($permissions === []) {
+        throw new RuntimeException("Role \"{$editor->display_name}\" has no permissions to copy.");
+    }
     if (!in_array('access-api', $permissions, true)) {
         $permissions[] = 'access-api';
     }
