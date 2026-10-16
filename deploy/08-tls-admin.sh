@@ -20,7 +20,7 @@ fi
 
 if grep -q '^APP_URL=http://' .env; then
   sed -i "s|^APP_URL=.*|APP_URL=https://${HOST}|" .env
-  sudo -u www-data php artisan bookstack:update-url "http://${HOST}" "https://${HOST}"
+  sudo -u www-data php artisan bookstack:update-url --force "http://${HOST}" "https://${HOST}"
 fi
 
 MARKER=storage/.fleet-admin-created
