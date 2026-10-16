@@ -43,6 +43,13 @@ require() {
   done
 }
 
+# Git Bash rewrites arguments that start with "/" into Windows paths before
+# aws.exe sees them. That turns the SSM AMI parameter and /dev/sda1 into names
+# that do not exist. The variable disables that rewrite for this process.
+aws() {
+  MSYS_NO_PATHCONV=1 command aws "$@"
+}
+
 aws_text() {
   aws "$@" --output text | tr -d '\r'
 }

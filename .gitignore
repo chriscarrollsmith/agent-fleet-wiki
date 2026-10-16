@@ -1,4 +1,6 @@
 .env
+state.env
+bookstack-s3.env
+*.pem
 deploy/state.env
 deploy/bookstack-s3.env
-deploy/*.pem
