@@ -107,7 +107,7 @@ def unquote_env(value: str) -> str:
         return bytes(value[2:-1], "utf-8").decode("unicode_escape")
     if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
         return value[1:-1]
-    # deploy/create-user.sh writes values with printf %q, which escapes spaces.
+    # deploy/create-user-ssh.sh writes values with printf %q, which escapes spaces.
     return value.replace("\\ ", " ")
 
 
@@ -131,7 +131,8 @@ def load_bookstack_env(path: str) -> dict[str, str]:
     """Read BookStack credentials from any of the repo's env files.
 
     Understands BOOKSTACK_URL / BOOKSTACK_TOKEN directly, plus the files
-    written by deploy/create-user.sh (TOKEN_ID + TOKEN_SECRET, or
+    written by deploy/create-user.sh or deploy/create-user-ssh.sh
+    (TOKEN_ID + TOKEN_SECRET, or
     AUTHORIZATION) and deploy/state.env (HOST).
     """
     if not os.path.isfile(path):

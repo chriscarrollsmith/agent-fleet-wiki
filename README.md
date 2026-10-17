@@ -30,11 +30,16 @@ Stages are idempotent, so re-running is safe. Generated artifacts
 
 ## 4. Create an agent user
 
-BookStack does not ship a command for a normal user or an API token.
-`deploy/create-user.sh` creates both on the instance. The default role,
-Agent, is a copy of Editor plus the permissions the API needs for
-normal research work: `access-api`, `content-export`, attachment upload,
-gallery images, and comments. Editor does not have the attachment or
+BookStack has no API endpoint for API tokens, so a token has to be created
+through the admin UI. `deploy/create-user.sh` does this over HTTPS, driving
+the same routes a browser uses. It needs only the site URL and the admin
+credentials, which are already in `.env` (`BOOKSTACK_URL`, `ADMIN_EMAIL`,
+`ADMIN_PASSWORD`). No SSH, AWS, or instance access is required, so this
+works even when the AWS SSO session has expired.
+
+The default role, Agent, is a copy of Editor plus the permissions the API
+needs for normal research work: `access-api`, `content-export`, attachment
+upload, gallery images, and comments. Editor does not have the attachment or
 comment permissions. Registration stays closed.
 
 ```bash
@@ -53,6 +58,16 @@ another user:
 
 ```bash
 bash deploy/create-user.sh --sync-role
+```
+
+If the admin account has two-factor authentication enabled, the scripted
+login cannot complete. Use the SSH/PHP fallback instead, which runs on the
+instance and does not need the admin password:
+
+```bash
+bash deploy/create-user-ssh.sh \
+  --name "Agent User" \
+  --email "agent-user@example.com"
 ```
 
 The new user can see books the Editor role can see. A book with its own
