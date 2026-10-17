@@ -5,12 +5,12 @@ Reads BOOKSTACK_URL and BOOKSTACK_TOKEN (id:secret) from the environment
 or from --env-file. Prints API JSON to stdout. Errors go to stderr.
 
 Examples:
-  bookstack/bookstack.sh books list
-  bookstack/bookstack.sh pages get 3 --field markdown
-  bookstack/bookstack.sh pages create --book 1 --name "Note" --markdown-file note.md
-  bookstack/bookstack.sh attachments upload --page 3 --file diagram.png
-  bookstack/bookstack.sh attachments get 1 --output diagram.png
-  bookstack/bookstack.sh search "capital region" --book 1
+  client/bookstack.sh books list
+  client/bookstack.sh pages get 3 --field markdown
+  client/bookstack.sh pages create --book 1 --name "Note" --markdown-file note.md
+  client/bookstack.sh attachments upload --page 3 --file diagram.png
+  client/bookstack.sh attachments get 1 --output diagram.png
+  client/bookstack.sh search "capital region" --book 1
 """
 
 from __future__ import annotations

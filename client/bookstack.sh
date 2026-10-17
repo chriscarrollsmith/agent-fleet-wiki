@@ -8,5 +8,5 @@ fi
 if command -v python >/dev/null 2>&1; then
   exec python "$ROOT/bookstack.py" "$@"
 fi
-echo "python3 is required to run bookstack/bookstack.sh" >&2
+echo "python3 is required to run client/bookstack.sh" >&2
 exit 1
