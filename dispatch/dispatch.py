@@ -15,11 +15,13 @@ import argparse
 import os
 import shlex
 import sys
+from pathlib import Path
 
 import modal
 
 APP_NAME = "cloud-agent-dispatch"
 WORKDIR = "/workspace"
+DEFAULT_ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
 
 
 def build_image(
@@ -127,6 +129,19 @@ def load_env_file(path: str) -> dict[str, str]:
     return values
 
 
+def apply_env_file(path: str) -> None:
+    """Load KEY=VALUE pairs from a local env file into the process environment.
+
+    Existing environment variables win, so an explicitly exported value is not
+    clobbered. This lets a bare --secret KEY pick up OPENROUTER_API_KEY and
+    friends from the repo's .env file.
+    """
+    if not path or not os.path.isfile(path):
+        return
+    for key, value in load_env_file(path).items():
+        os.environ.setdefault(key, value)
+
+
 def load_bookstack_env(path: str) -> dict[str, str]:
     """Read BookStack credentials from any of the repo's env files.
 
@@ -178,8 +193,11 @@ def main():
     parser.add_argument("--copy", action="append", default=[], metavar="SRC[:DEST]", help="Copy a local file or directory into the image at DEST, default /opt/<name> (repeatable)")
     parser.add_argument("--setup", help="Shell command to run in the image after --copy (for example, chmod on a copied script)")
     parser.add_argument("--bookstack-env", action="append", default=[], metavar="PATH", help="Read BOOKSTACK_URL and BOOKSTACK_TOKEN from a local env file (repeatable)")
+    parser.add_argument("--env-file", default=str(DEFAULT_ENV_FILE), metavar="PATH", help="Load local env vars (for bare --secret KEY) from PATH (default: repo .env)")
     parser.add_argument("--timeout", type=int, default=3600, help="Sandbox timeout in seconds (default 3600)")
     args = parser.parse_args()
+
+    apply_env_file(args.env_file)
 
     prompt = args.prompt
     if prompt.startswith("@"):
