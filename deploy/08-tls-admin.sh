@@ -32,7 +32,7 @@ HOST=$1
 ADMIN_EMAIL=$2
 cd /var/www/bookstack
 
-if ! certbot certificates 2>/dev/null | grep -q "$HOST"; then
+if ! certbot certificates 2>/dev/null | grep -Fq "$HOST"; then
   apt-get install -y certbot python3-certbot-apache
   certbot --apache -d "$HOST" --non-interactive --agree-tos -m "$ADMIN_EMAIL" --redirect
 fi

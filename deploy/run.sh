@@ -21,10 +21,34 @@ STAGES=(
 
 FROM=""
 case "${1:-}" in
-  --from) FROM="${2:-}" ;;
+  --from)
+    FROM="${2:-}"
+    if [[ -z "$FROM" ]]; then
+      echo "Usage: bash deploy/run.sh [--from STAGE]" >&2
+      exit 1
+    fi
+    ;;
   "") ;;
-  *) FROM="$1" ;;
+  *)
+    echo "Unknown argument: $1" >&2
+    echo "Usage: bash deploy/run.sh [--from STAGE]" >&2
+    exit 1
+    ;;
 esac
+
+if [[ -n "$FROM" ]]; then
+  matched=0
+  for stage in "${STAGES[@]}"; do
+    if [[ "$stage" == *"$FROM"* ]]; then
+      matched=1
+    fi
+  done
+  if [[ "$matched" -eq 0 ]]; then
+    echo "No stage matches '${FROM}'. Available stages:" >&2
+    printf '  %s\n' "${STAGES[@]}" >&2
+    exit 1
+  fi
+fi
 
 LOG_DIR="$ROOT/logs"
 mkdir -p "$LOG_DIR"

@@ -589,6 +589,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="bookstack",
         description="Call the BookStack API as an agent user.",
+        allow_abbrev=False,
     )
     parser.add_argument("--url", help="BookStack base URL, overriding BOOKSTACK_URL")
     parser.add_argument("--token", help="token id and secret as id:secret, overriding BOOKSTACK_TOKEN")
@@ -769,7 +770,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def split_global_args(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
     """Accept --url, --token, --env-file, --format, and --field before or after the subcommand."""
-    pre = argparse.ArgumentParser(add_help=False)
+    pre = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
     pre.add_argument("--url", default=None)
     pre.add_argument("--token", default=None)
     pre.add_argument("--env-file", default=None)
