@@ -2,6 +2,8 @@
 
 Private BookStack wiki (S3-backed attachments) on a single AWS EC2 instance.
 
+This checkout deploys one wiki and keeps the SSH key. To stand up another wiki, and an orchestration folder that administers it with the admin login and no SSH, follow [docs/provision.md](docs/provision.md).
+
 ## 1. Configure
 
 ```bash
