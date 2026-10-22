@@ -6,7 +6,7 @@ load_env
 require BUCKET
 
 if [[ "$BUCKET" == *change-me* || "$BUCKET" == *your-unique-bucket-name* ]]; then
-  echo "Set BUCKET in .env to a real, globally unique name." >&2
+  echo "Set BUCKET in ${ENV_FILE} to a real, globally unique name." >&2
   exit 1
 fi
 if [[ ! "$BUCKET" =~ ^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$ ]]; then

@@ -11,6 +11,33 @@ cp .env.example .env
 # edit .env: AWS_PROFILE, AWS_DEFAULT_REGION, BUCKET (globally unique), ADMIN_EMAIL
 ```
 
+### Several wikis from one checkout
+
+Each wiki can keep its own credentials in `rollouts/<name>/`, which is
+gitignored:
+
+```
+rollouts/<name>/
+  .env               # AWS profile, bucket, ADMIN_EMAIL, ADMIN_PASSWORD, BOOKSTACK_URL
+  state.env          # VPC, SUBNET, SG, INSTANCE_ID, ALLOC, EIP, HOST
+  bookstack.pem      # SSH key for ubuntu@<EIP>
+  bookstack-s3.env   # attachment bucket access key
+  users/             # deploy/create-user.sh output
+```
+
+Set `ROLLOUT` to choose one. Every deploy and user script, and
+`dispatch/dispatch.py`, then reads and writes that directory instead of
+`.env` and `deploy/`. `INFISICAL_PROJECT_ID`, `INFISICAL_CLIENT_ID`, and
+`INFISICAL_CLIENT_SECRET` in that `.env` are what
+`deploy/sync-infisical-users.sh` uses for that wiki.
+
+```bash
+ROLLOUT=knowledge-workers bash deploy/run.sh --from 06
+ROLLOUT=knowledge-workers bash deploy/create-user.sh --name "..." --email "..."
+```
+
+Without `ROLLOUT`, the single-wiki layout below applies.
+
 ## 2. Authenticate with AWS SSO
 
 ```bash
@@ -55,6 +82,26 @@ and written under `deploy/users/`, which is gitignored. Re-running the same
 email fails, because the user already exists. An existing `--role` is reused
 only when that role already has `access-api`.
 
+`--identity` also stores those credentials in Infisical. The machine identity
+is created under the Infisical project's Access Control. Its client id, client
+secret, and project id are `INFISICAL_CLIENT_ID`, `INFISICAL_CLIENT_SECRET`,
+and `INFISICAL_PROJECT_ID`. The local file remains the source. The utility
+writes `dev /users/<identity>` and does not upload `IDENTITY`.
+
+```bash
+bash deploy/create-user.sh \
+  --name "Agent User" \
+  --email "agent-user@example.com" \
+  --identity agent-user
+
+bash deploy/sync-infisical-users.sh --identity agent-user --file deploy/users/agent-user@example.com.env
+bash deploy/sync-infisical-users.sh --dry-run
+```
+
+`deploy/sync-infisical-users.sh` with no arguments pushes every
+`deploy/users/*.env` that already contains `IDENTITY`. The orchestrator prompt
+that reads these credentials back is in [docs/provision.md](docs/provision.md).
+
 An existing Agent role can be given those permissions without creating
 another user:
 
@@ -71,6 +118,8 @@ bash deploy/create-user-ssh.sh \
   --name "Agent User" \
   --email "agent-user@example.com"
 ```
+
+That fallback writes the same local file and does not call Infisical. Sync it afterwards with `deploy/sync-infisical-users.sh`.
 
 The new user can see books the Editor role can see. A book with its own
 permission list must include the Agent role or the API will not see it.

@@ -21,7 +21,9 @@ import modal
 
 APP_NAME = "cloud-agent-dispatch"
 WORKDIR = "/workspace"
-DEFAULT_ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
+ROOT = Path(__file__).resolve().parent.parent
+# ROLLOUT=<name> defaults to rollouts/<name>/.env, matching deploy/lib.sh.
+DEFAULT_ENV_FILE = ROOT / "rollouts" / os.environ["ROLLOUT"] / ".env" if os.environ.get("ROLLOUT") else ROOT / ".env"
 
 
 def build_image(

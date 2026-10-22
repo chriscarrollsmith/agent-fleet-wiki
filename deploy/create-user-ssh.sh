@@ -14,6 +14,8 @@
 #   bash deploy/create-user-ssh.sh --sync-role
 #
 # Credentials are printed once and written to deploy/users/ (gitignored).
+# This fallback does not sync Infisical. After it writes the file, run
+# deploy/sync-infisical-users.sh --identity <identity> --file <that file>.
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 load_env
@@ -211,7 +213,7 @@ for key in user_id email name role role_id password token_id token_secret author
   fi
 done
 
-users_dir="$ROOT/deploy/users"
+users_dir="$USERS_DIR"
 mkdir -p "$users_dir"
 chmod 700 "$users_dir"
 safe_email="$(printf '%s' "$EMAIL" | tr -c 'A-Za-z0-9._@-' '_')"
@@ -234,4 +236,4 @@ echo "Created BookStack user ${email} (id ${user_id}) in role ${role}."
 echo "Password: ${password}"
 echo "Authorization: ${authorization}"
 echo "Saved to ${out_file}"
-echo "Paste the Authorization line back. Do not commit deploy/users/."
+echo "Paste the Authorization line back. Do not commit ${users_dir}."

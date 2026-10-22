@@ -20,7 +20,7 @@ if [[ -n "${INSTANCE_ID:-}" ]]; then
     aws ec2 start-instances --instance-ids "$INSTANCE_ID" >/dev/null
     aws ec2 wait instance-running --instance-ids "$INSTANCE_ID"
   else
-    echo "Instance ${INSTANCE_ID} is ${state:-missing}. Clear INSTANCE_ID from deploy/state.env to launch another." >&2
+    echo "Instance ${INSTANCE_ID} is ${state:-missing}. Clear INSTANCE_ID from ${STATE_FILE} to launch another." >&2
     exit 1
   fi
 else

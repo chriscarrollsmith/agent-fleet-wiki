@@ -2,7 +2,7 @@
 
 Two directories.
 
-This repo is the infrastructure checkout. It creates the EC2 instance, the private attachment bucket, and the admin account, and it keeps the SSH key. One working copy is bound to one wiki by `deploy/state.env`. Running `bash deploy/run.sh` again updates that wiki.
+This repo is the infrastructure checkout. It creates the EC2 instance, the private attachment bucket, and the admin account, and it keeps the SSH key. One working copy is bound to one wiki by `deploy/state.env`. Running `bash deploy/run.sh` again updates that wiki. To keep several wikis in one checkout instead, give each a `rollouts/<name>/` directory and set `ROLLOUT=<name>`. The README describes that layout.
 
 The orchestration folder is a sibling directory. It creates BookStack users and dispatches agents. Its BookStack credential is the admin login. The instance key, the AWS profile, and the S3 attachment keys stay in the infrastructure checkout.
 
@@ -65,6 +65,9 @@ client/bookstack.py
 client/bookstack.sh
 deploy/create-user.sh
 deploy/create-user-http.py
+deploy/sync-infisical-users.sh
+deploy/sync_infisical_users.py
+deploy/test_sync_infisical_users.py
 dispatch/__init__.py
 dispatch/dispatch.py
 dispatch/README.md
@@ -98,11 +101,12 @@ BOOKSTACK_URL=https://<HOST>
 ADMIN_EMAIL=<infrastructure ADMIN_EMAIL>
 ADMIN_PASSWORD=<infrastructure ADMIN_PASSWORD>
 OPENROUTER_API_KEY=
-
-# Optional. Machine identity for the agent-token store in "Agent credentials".
-# INFISICAL_CLIENT_ID=
-# INFISICAL_CLIENT_SECRET=
+INFISICAL_PROJECT_ID=
+INFISICAL_CLIENT_ID=
+INFISICAL_CLIENT_SECRET=
 ```
+
+`INFISICAL_CLIENT_ID` and `INFISICAL_CLIENT_SECRET` are the universal-auth client id and secret of a machine identity created under the project's Access Control. `INFISICAL_PROJECT_ID` is that project's id. Cloud agents often receive the client id and secret in the environment. Put the project id in this file as well, and write the same id into `AGENTS.md`. The steps to create the identity are in [Agent credentials](#agent-credentials).
 
 `deploy/create-user.sh` reads `BOOKSTACK_URL`, `ADMIN_EMAIL`, and `ADMIN_PASSWORD` from this file. When `BOOKSTACK_URL` is absent it uses `HOST` from `deploy/state.env`. Write that file as one line, and do not copy the infrastructure state file:
 
@@ -145,32 +149,60 @@ The instance, the attachment bucket, and the SSH key live in the infrastructure 
 bookstack.env.example      # template for a direct client token
 client/bookstack.py        # BookStack API CLI
 client/bookstack.sh
-deploy/create-user.sh      # create user + token over HTTPS
+deploy/create-user.sh           # create user + token over HTTPS
 deploy/create-user-http.py
-deploy/state.env           # HOST only (gitignored)
-deploy/users/              # generated credentials, one file per agent (gitignored)
+deploy/sync-infisical-users.sh   # push deploy/users credentials to Infisical
+deploy/sync_infisical_users.py
+deploy/state.env                # HOST only (gitignored)
+deploy/users/                   # generated credentials, one file per agent (gitignored)
 dispatch/dispatch.py
 dispatch/README.md
 dispatch/task.md
 
 ## Credentials
 
+`.env` is loaded by `deploy/create-user.sh`, `deploy/sync-infisical-users.sh`, and `dispatch/dispatch.py`.
+
 | Variable | Used by |
 | --- | --- |
 | `BOOKSTACK_URL` | create-user; passed to sandboxes through `--bookstack-env` |
 | `ADMIN_EMAIL`, `ADMIN_PASSWORD` | `deploy/create-user.sh` |
 | `OPENROUTER_API_KEY` | `dispatch/dispatch.py`, via a bare `--secret` |
-| `INFISICAL_CLIENT_ID`, `INFISICAL_CLIENT_SECRET` | optional agent-token store |
+| `INFISICAL_PROJECT_ID` | `deploy/sync-infisical-users.sh` |
+| `INFISICAL_CLIENT_ID`, `INFISICAL_CLIENT_SECRET` | `deploy/sync-infisical-users.sh` |
+
+The client id and secret belong to a machine identity created under the project's Access Control. Cloud agents receive those two from the environment. `INFISICAL_PROJECT_ID` is the Infisical project id.
 
 ## Create an agent user
 
-    bash deploy/create-user.sh --name "Research Agent" --email "research-1@example.com"
+    bash deploy/create-user.sh --name "Research Agent" --email "research-1@example.com" --identity research-agent
 
-The password and `Authorization: Token <id>:<secret>` line are printed once and written to `deploy/users/<email>.env`.
+The password and `Authorization: Token <id>:<secret>` line are printed once and written to `deploy/users/<email>.env`. `--identity` also syncs that file to Infisical. The local file is a copy. The shared record is Infisical.
+
+## BookStack users in Infisical
+
+`deploy/sync-infisical-users.sh` pushes local credential files to Infisical. The local file is the source: matching secrets are left unchanged, and a different remote value is overwritten.
+
+| | |
+| --- | --- |
+| Site | `https://app.infisical.com` |
+| Project | `<project name>` (`<project id>`) |
+| Environment | `dev` |
+| Path | `/users/<identity>` |
+
+`<identity>` is the agent slug. Each folder holds `USER_ID`, `EMAIL`, `NAME`, `ROLE`, `ROLE_ID`, `PASSWORD`, `TOKEN_ID`, `TOKEN_SECRET`, and `AUTHORIZATION`. `AUTHORIZATION` is the header value `Token <id>:<secret>`. `IDENTITY` in the local file is the slug. It is not uploaded.
+
+    bash deploy/sync-infisical-users.sh --identity research-agent --file deploy/users/research-1@example.com.env
+    bash deploy/sync-infisical-users.sh
+    bash deploy/sync-infisical-users.sh --dry-run
+
+The utility creates `/users/<identity>` when it is missing, then upserts the nine fields. The parent `/users` folder must already exist. `--dry-run` reports the folder and secret names that would change.
+
+To read an existing user, log in with `POST /api/v1/auth/universal-auth/login`. List folders with `GET /api/v2/folders?projectId=<project id>&environment=dev&path=/users`. Read one user with `GET /api/v4/secrets?projectId=<project id>&environment=dev&secretPath=/users/<identity>&viewSecretValue=true&expandSecretReferences=false&includeImports=false`.
 
 ## Dispatch an agent
 
-See `dispatch/README.md`. Pass the host file and the user file. `dispatch.py` loads `.env`, so a bare `--secret OPENROUTER_API_KEY` resolves from it.
+Take the user's `TOKEN_ID` and `TOKEN_SECRET` from Infisical, or from the local `deploy/users/<email>.env` copy. `dispatch.py` loads `.env`, so a bare `--secret OPENROUTER_API_KEY` resolves from it.
 
     uv run dispatch/dispatch.py \
       --install "npm install -g --ignore-scripts @earendil-works/pi-coding-agent" \
@@ -185,7 +217,7 @@ See `dispatch/README.md`. Pass the host file and the user file. `dispatch.py` lo
 
 ### AGENTS.md
 
-Write this file for the orchestrator role on this wiki. Fill in the naming rule, the dispatch rules, and where shared credentials live.
+Write this file for the orchestrator role on this wiki. Fill in the project name, the project id, the naming rule, and the dispatch rules.
 
 ```markdown
 # Orchestrator
@@ -195,9 +227,18 @@ You create BookStack users and dispatch agents against the wiki in `BOOKSTACK_UR
 ## Users
 
 Name each identity so the model, harness, and topic are visible in the slug.
-Read an existing user's credentials from the store documented in the README.
-After `deploy/create-user.sh`, put that user's credentials in the same store before dispatching them.
-`deploy/users/<email>.env` is a local copy and is gitignored.
+
+BookStack user credentials are stored in Infisical. Read them from there when you select an existing user. When you create a user, sync that user's local credential file to Infisical before dispatching them. The file under `deploy/users/` is a local copy and is gitignored.
+
+`deploy/create-user.sh --identity <identity>` writes the local file and syncs it. To sync a file that already exists:
+
+    bash deploy/sync-infisical-users.sh --identity <identity> --file deploy/users/<email>.env
+
+`bash deploy/sync-infisical-users.sh` pushes every `deploy/users/*.env` that already contains `IDENTITY`. The local file is the source. The utility creates `dev /users/<identity>` when it is missing and upserts the nine credential fields. It does not upload `IDENTITY`.
+
+Authenticate to `https://app.infisical.com` with universal auth (`INFISICAL_CLIENT_ID` and `INFISICAL_CLIENT_SECRET`): `POST /api/v1/auth/universal-auth/login`. Those credentials belong to a machine identity created under this project's Access Control. The project is <project name> (`<project id>`). Credentials live in the `dev` environment at `/users/<identity>`, where `<identity>` is the agent slug above. List those folders with `GET /api/v2/folders?projectId=<project id>&environment=dev&path=/users`. Read one user with `GET /api/v4/secrets` using the same `projectId`, `environment=dev`, `secretPath=/users/<identity>`, `viewSecretValue=true`, `expandSecretReferences=false`, and `includeImports=false`.
+
+Each folder holds `USER_ID`, `EMAIL`, `NAME`, `ROLE`, `ROLE_ID`, `PASSWORD`, `TOKEN_ID`, `TOKEN_SECRET`, and `AUTHORIZATION`.
 
 ## Dispatch
 
@@ -237,11 +278,28 @@ Describe the research question here.
 
 ### Agent credentials
 
-`bash deploy/create-user.sh --name "..." --email "..."` drives the admin web UI over HTTPS. The first run creates the Agent role: Editor, plus `access-api`, `content-export`, attachment upload, gallery images, and comments. The password and `Authorization: Token <id>:<secret>` line are printed once and written to `deploy/users/<email>.env`.
+`bash deploy/create-user.sh --name "..." --email "..." --identity <identity>` drives the admin web UI over HTTPS, writes `deploy/users/<email>.env`, and syncs that file to Infisical. The first run creates the Agent role: Editor, plus `access-api`, `content-export`, attachment upload, gallery images, and comments.
 
-That file holds `USER_ID`, `EMAIL`, `NAME`, `ROLE`, `ROLE_ID`, `PASSWORD`, `TOKEN_ID`, `TOKEN_SECRET`, and `AUTHORIZATION`. `AUTHORIZATION` is the header value `Token <id>:<secret>`.
+The local file holds `USER_ID`, `EMAIL`, `NAME`, `ROLE`, `ROLE_ID`, `PASSWORD`, `TOKEN_ID`, `TOKEN_SECRET`, `AUTHORIZATION`, and `IDENTITY`. `AUTHORIZATION` is the header value `Token <id>:<secret>`. `IDENTITY` is the agent slug. It stays in the local file and is not uploaded.
 
-When another machine has to dispatch that user, copy the same nine fields into a secret store and name the store in the README and in `AGENTS.md`. On Infisical, authenticate with `POST /api/v1/auth/universal-auth/login` using `INFISICAL_CLIENT_ID` and `INFISICAL_CLIENT_SECRET`. Create `/users/<identity>` with `POST /api/v2/folders`, then write the fields with `POST /api/v4/secrets/batch`. `<identity>` is the agent slug. Record the project id and environment next to those variables.
+Create the Infisical machine identity under the project's Access Control. Open the project, go to Access Control, then Machine Identities, and add an identity on the Create New tab. Give it a project role that can list and create secret folders, and can read and write secret values, in the `dev` environment. Universal Auth is enabled on a new identity. Copy the client id, create a client secret, and store both with the project id in `.env`.
+
+Create a `/users` folder in the `dev` environment before the first sync. The utility creates `/users/<identity>` under that folder. It does not create `/users` itself.
+
+`bash deploy/sync-infisical-users.sh` pushes every `deploy/users/*.env` that already contains `IDENTITY`. Pass `--identity` and `--file` for one file. `--dry-run` reports the folder and secret names that would change. The local file is the source: matching secrets are left unchanged, and a different remote value is overwritten.
+
+```bash
+bash deploy/sync-infisical-users.sh --identity research-agent --file deploy/users/research-1@example.com.env
+bash deploy/sync-infisical-users.sh
+bash deploy/sync-infisical-users.sh --dry-run
+uv run python deploy/test_sync_infisical_users.py
+```
+
+The unit test does not call Infisical.
+
+To read an existing user, authenticate with `POST /api/v1/auth/universal-auth/login` and the same client id and secret. List folders with `GET /api/v2/folders?projectId=<project id>&environment=dev&path=/users`. Read one user with `GET /api/v4/secrets?projectId=<project id>&environment=dev&secretPath=/users/<identity>&viewSecretValue=true&expandSecretReferences=false&includeImports=false`.
+
+Put that project id and these routes in `AGENTS.md`. The orchestrator reads credentials from Infisical when it selects an existing user, and syncs a new user's local file before dispatching them.
 
 ### Check the boundary
 
@@ -259,4 +317,4 @@ bash client/bookstack.sh --env-file deploy/users/agent@example.com.env books lis
 
 `create-user.sh` logs in as the admin user in `.env`. The client call uses that same `BOOKSTACK_URL` and the new user's `TOKEN_ID` and `TOKEN_SECRET`.
 
-An admin account with two-factor authentication cannot complete the scripted HTTPS login. Create the user from the infrastructure checkout with `deploy/create-user-ssh.sh`. The private key stays there.
+An admin account with two-factor authentication cannot complete the scripted HTTPS login. Create the user from the infrastructure checkout with `deploy/create-user-ssh.sh`. The private key stays there. That fallback does not call Infisical. From the checkout that holds the Infisical variables, run `bash deploy/sync-infisical-users.sh --identity <identity> --file <users-dir>/<email>.env`.

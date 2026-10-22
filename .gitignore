@@ -1,11 +1,19 @@
+# Per-rollout credentials: rollouts/<name>/{.env,state.env,bookstack.pem,bookstack-s3.env,users/}
+rollouts/
+
+# Single-wiki layout (no ROLLOUT set)
 .env
+.env.*
+!.env.example
 deploy/state.env
 deploy/bookstack-s3.env
-deploy/*.pem
-bookstack-s3.env
-bookstack.pem
-logs/
-command-history.txt
 deploy/users/
 bookstack.env
+
+# Safety nets for stray keys and env files
+*.pem
+deploy/*.env
+
+logs/
+command-history.txt
 __pycache__/

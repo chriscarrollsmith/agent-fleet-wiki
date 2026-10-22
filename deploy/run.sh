@@ -52,7 +52,7 @@ fi
 
 LOG_DIR="$ROOT/logs"
 mkdir -p "$LOG_DIR"
-LOG_FILE="$LOG_DIR/deploy-$(date +%Y%m%d-%H%M%S).log"
+LOG_FILE="$LOG_DIR/deploy-${ROLLOUT:+${ROLLOUT}-}$(date +%Y%m%d-%H%M%S).log"
 : > "$LOG_FILE"
 
 log() {

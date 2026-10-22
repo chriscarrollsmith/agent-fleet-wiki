@@ -9,16 +9,23 @@ KEY_NAME="${KEY_NAME:-bookstack}"
 MY_IP="$(curl -fsS https://checkip.amazonaws.com | tr -d '\r')/32"
 
 if aws ec2 describe-key-pairs --key-names "$KEY_NAME" >/dev/null 2>&1; then
-  if [[ ! -f "$KEY_FILE" ]]; then
-    echo "Key pair ${KEY_NAME} exists in AWS, but ${KEY_FILE} is missing." >&2
+  if [[ ! -s "$KEY_FILE" ]]; then
+    echo "Key pair ${KEY_NAME} exists in AWS, but ${KEY_FILE} is missing or empty." >&2
     echo "AWS cannot show the private key again. Delete the key pair, or put the pem file back, then re-run." >&2
     exit 1
   fi
   echo "Reusing key pair ${KEY_NAME}."
 else
+  # describe-key-pairs also fails when the SSO session has expired. Never
+  # overwrite a key that may still be the only copy.
+  if [[ -s "$KEY_FILE" ]]; then
+    echo "${KEY_FILE} exists, but key pair ${KEY_NAME} was not found (is the SSO session expired?). Not overwriting it." >&2
+    exit 1
+  fi
   echo "Creating key pair ${KEY_NAME}."
   umask 077
-  aws ec2 create-key-pair --key-name "$KEY_NAME" --query KeyMaterial --output text | tr -d '\r' > "$KEY_FILE"
+  key_material="$(aws_text ec2 create-key-pair --key-name "$KEY_NAME" --query KeyMaterial)"
+  printf '%s\n' "$key_material" > "$KEY_FILE"
   chmod 600 "$KEY_FILE"
 fi
 

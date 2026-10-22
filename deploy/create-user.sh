@@ -8,9 +8,11 @@
 # Usage:
 #   bash deploy/create-user.sh --name "Pi Agent" --email "pi-agent@example.com"
 #   bash deploy/create-user.sh --name "Pi Agent" --email "pi-agent@example.com" --role Agent
+#   bash deploy/create-user.sh --name "Pi Agent" --email "pi-agent@example.com" --identity pi-agent
 #   bash deploy/create-user.sh --sync-role
 #
 # Credentials are printed once and written to deploy/users/ (gitignored).
+# --identity also syncs them to Infisical at dev /users/<identity>.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT="$HERE/create-user-http.py"

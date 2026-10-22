@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Issue the sslip.io certificate and replace the default admin account.
-# The admin password is generated locally, written to .env, and uploaded once.
+# The admin password is generated locally, written to the rollout .env, and uploaded once.
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 load_env
@@ -11,14 +11,14 @@ require ADMIN_EMAIL
 admin_created="$(ssh_ubuntu test -f /var/www/bookstack/storage/.fleet-admin-created && echo yes || echo no)"
 if [[ "$admin_created" == yes ]]; then
   ADMIN_PASSWORD=""
-  echo "Admin account already exists. Password remains in ${ROOT}/.env."
+  echo "Admin account already exists. Password remains in ${ENV_FILE}."
 else
   if [[ -z "${ADMIN_PASSWORD:-}" ]]; then
     ADMIN_PASSWORD="$(generate_password)"
     set_env_var ADMIN_PASSWORD "$ADMIN_PASSWORD"
-    echo "Generated an admin password and wrote it to ${ROOT}/.env."
+    echo "Generated an admin password and wrote it to ${ENV_FILE}."
   else
-    echo "Using ADMIN_PASSWORD from ${ROOT}/.env."
+    echo "Using ADMIN_PASSWORD from ${ENV_FILE}."
   fi
   pw_file="$(mktemp)"
   printf 'ADMIN_PASSWORD=%s\n' "$ADMIN_PASSWORD" > "$pw_file"
@@ -58,4 +58,4 @@ REMOTE
 
 echo
 echo "Open https://${HOST}"
-echo "Sign in with ${ADMIN_EMAIL}. The password is in ${ROOT}/.env (ADMIN_PASSWORD)."
+echo "Sign in with ${ADMIN_EMAIL}. The password is in ${ENV_FILE} (ADMIN_PASSWORD)."

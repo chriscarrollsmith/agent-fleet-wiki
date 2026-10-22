@@ -8,9 +8,23 @@ export MSYS_NO_PATHCONV=1
 export MSYS2_ARG_CONV_EXCL='*'
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-STATE_FILE="$ROOT/deploy/state.env"
-DEFAULT_SECRET_FILE="$ROOT/deploy/bookstack-s3.env"
-DEFAULT_KEY_FILE="$ROOT/deploy/bookstack.pem"
+
+# ROLLOUT=<name> keeps one wiki's credentials in rollouts/<name>/ (gitignored).
+# Without it, a checkout is bound to one wiki through .env and deploy/.
+if [[ -n "${ROLLOUT:-}" ]]; then
+  ROLLOUT_DIR="$ROOT/rollouts/$ROLLOUT"
+  ENV_FILE="$ROLLOUT_DIR/.env"
+  STATE_FILE="$ROLLOUT_DIR/state.env"
+  DEFAULT_SECRET_FILE="$ROLLOUT_DIR/bookstack-s3.env"
+  DEFAULT_KEY_FILE="$ROLLOUT_DIR/bookstack.pem"
+  USERS_DIR="$ROLLOUT_DIR/users"
+else
+  ENV_FILE="$ROOT/.env"
+  STATE_FILE="$ROOT/deploy/state.env"
+  DEFAULT_SECRET_FILE="$ROOT/deploy/bookstack-s3.env"
+  DEFAULT_KEY_FILE="$ROOT/deploy/bookstack.pem"
+  USERS_DIR="$ROOT/deploy/users"
+fi
 
 # Resolve a possibly-relative artifact path against the repo root. Handles both
 # POSIX (/c/...) and native Windows (C:/...) absolute paths.
@@ -29,26 +43,28 @@ source_file() {
 }
 
 load_env() {
-  if [[ ! -f "$ROOT/.env" ]]; then
-    echo "Missing ${ROOT}/.env" >&2
-    echo "Copy .env.example to .env and fill in the values." >&2
+  if [[ ! -f "$ENV_FILE" ]]; then
+    echo "Missing ${ENV_FILE}" >&2
+    echo "Copy .env.example to ${ENV_FILE} and fill in the values." >&2
     exit 1
   fi
   # Ambient shell vars must not override .env / defaults for generated paths.
   unset KEY_FILE SECRET_FILE
   set -a
-  source_file "$ROOT/.env"
+  source_file "$ENV_FILE"
   set +a
+  # Older state files recorded absolute key paths; only .env may override them.
+  local env_key_file="${KEY_FILE:-}" env_secret_file="${SECRET_FILE:-}"
   if [[ -f "$STATE_FILE" ]]; then
     set -a
     source_file "$STATE_FILE"
     set +a
   fi
   export AWS_PROFILE="${AWS_PROFILE:-fleet-coordinator}"
-  : "${AWS_DEFAULT_REGION:?Set AWS_DEFAULT_REGION in .env}"
+  : "${AWS_DEFAULT_REGION:?Set AWS_DEFAULT_REGION in ${ENV_FILE}}"
   export AWS_DEFAULT_REGION
-  KEY_FILE="$(resolve_path "${KEY_FILE:-$DEFAULT_KEY_FILE}")"
-  SECRET_FILE="$(resolve_path "${SECRET_FILE:-$DEFAULT_SECRET_FILE}")"
+  KEY_FILE="$(resolve_path "${env_key_file:-$DEFAULT_KEY_FILE}")"
+  SECRET_FILE="$(resolve_path "${env_secret_file:-$DEFAULT_SECRET_FILE}")"
   export KEY_FILE SECRET_FILE
 }
 
@@ -56,7 +72,7 @@ require() {
   local name
   for name in "$@"; do
     if [[ -z "${!name:-}" ]]; then
-      echo "Set ${name} in .env" >&2
+      echo "Set ${name} in ${ENV_FILE}" >&2
       exit 1
     fi
   done
@@ -73,7 +89,7 @@ generate_password() {
 
 # Set KEY=value in a .env file, replacing an existing line if present.
 set_env_var() {
-  local key="$1" value="$2" file="${3:-$ROOT/.env}"
+  local key="$1" value="$2" file="${3:-$ENV_FILE}"
   local tmp="${file}.tmp"
   umask 077
   awk -v k="$key" -v v="$value" '
@@ -91,7 +107,8 @@ aws_text() {
 
 persist_state() {
   local tmp="$STATE_FILE.tmp"
-  local keys=(VPC SUBNET SG KEY_FILE SECRET_FILE INSTANCE_ID ALLOC EIP HOST)
+  # KEY_FILE and SECRET_FILE are derived on load, so absolute paths never go stale.
+  local keys=(VPC SUBNET SG INSTANCE_ID ALLOC EIP HOST)
   local key
   umask 077
   : > "$tmp"
