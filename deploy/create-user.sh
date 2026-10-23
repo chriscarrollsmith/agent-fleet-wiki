@@ -12,7 +12,8 @@
 #   bash deploy/create-user.sh --sync-role
 #
 # Credentials are printed once and written to deploy/users/ (gitignored).
-# --identity also syncs them to Infisical at dev /users/<identity>.
+# --identity also syncs them to Infisical at dev /users/<folder>.
+# Each dot in the slug becomes a hyphen in that folder name.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT="$HERE/create-user-http.py"

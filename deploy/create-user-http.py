@@ -16,7 +16,7 @@ Usage:
 The default role, Agent, is a copy of Editor plus the permissions the API
 needs for normal research work. Credentials are printed once and written to
 deploy/users/ (gitignored). Pass --identity to sync them to Infisical at
-dev /users/<identity>. See docs/provision.md.
+dev /users/<folder>, the slug with each dot replaced by a hyphen. See docs/provision.md.
 """
 
 from __future__ import annotations
@@ -431,14 +431,15 @@ def build_parser() -> argparse.ArgumentParser:
             "attachment, image, and comment permissions the API requires.\n\n"
             "--sync-role adds those permissions to an existing role. It does not\n"
             "create a user or print a new token.\n\n"
-            "--identity stores the new credentials in Infisical at dev /users/<identity>\n"
-            "after the local file is written. The machine identity is created under\n"
-            "the project's Access Control."
+            "--identity stores the new credentials in Infisical at dev /users/<folder>\n"
+            "after the local file is written. Each dot in the slug becomes a hyphen\n"
+            "in that folder name. The machine identity is created under the project's\n"
+            "Access Control."
         ),
     )
     parser.add_argument("--name", help="display name for the new user")
     parser.add_argument("--email", help="email for the new user")
-    parser.add_argument("--identity", help="agent slug; also sync the new user to Infisical at /users/<identity>")
+    parser.add_argument("--identity", help="agent slug; also sync the new user to Infisical. Dots in the slug become hyphens in the folder name")
     parser.add_argument("--role", default="Agent", help="role to assign (default: Agent)")
     parser.add_argument("--sync-role", action="store_true", help="add missing agent permissions to --role")
     parser.add_argument("--url", help="BookStack base URL, overriding BOOKSTACK_URL")

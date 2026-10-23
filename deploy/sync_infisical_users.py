@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Push BookStack user credentials from deploy/users to Infisical.
 
-The local credential file is the source. This creates /users/<identity> in the
+The local credential file is the source. This creates /users/<folder> in the
 dev environment when that folder is missing, then upserts the nine BookStack
-fields. Matching remote values are left unchanged. IDENTITY is recorded on the
-local file and is not uploaded.
+fields. Infisical folder names cannot contain dots, so each dot in the agent
+slug becomes a hyphen. Matching remote values are left unchanged. IDENTITY is
+recorded on the local file and is not uploaded.
 
 INFISICAL_CLIENT_ID, INFISICAL_CLIENT_SECRET, and INFISICAL_PROJECT_ID come
 from the process environment, or from .env when the environment does not set
@@ -109,6 +110,15 @@ def shell_quote(value: str) -> str:
 def validate_slug(identity: str) -> None:
     if not SLUG_RE.fullmatch(identity):
         die("--identity must be an agent slug: letters, digits, and . _ -")
+
+
+def folder_name(identity: str) -> str:
+    """Infisical folder names reject dots, so each dot in a slug becomes a hyphen.
+
+    ``deepseek-flash-4.1-pi-crime-agent`` is stored at
+    ``/users/deepseek-flash-4-1-pi-crime-agent``.
+    """
+    return identity.replace(".", "-")
 
 
 def credentials_from(values: dict[str, str], path: Path | None = None) -> dict[str, str]:
@@ -272,8 +282,9 @@ class Infisical:
 def sync_user(client: Infisical, identity: str, values: dict[str, str], dry_run: bool, path: Path | None = None) -> list[str]:
     validate_slug(identity)
     local = credentials_from(values, path)
-    secret_path = f"{USERS_PATH}/{identity}"
-    missing_folder = identity not in client.folder_names(USERS_PATH)
+    name = folder_name(identity)
+    secret_path = f"{USERS_PATH}/{name}"
+    missing_folder = name not in client.folder_names(USERS_PATH)
     remote = {} if missing_folder else client.secret_values(secret_path)
     pending = keys_to_write(local, remote)
     lines: list[str] = []
@@ -281,7 +292,7 @@ def sync_user(client: Infisical, identity: str, values: dict[str, str], dry_run:
         action = "would create" if dry_run else "created"
         lines.append(f"{identity}: {action} {secret_path}")
         if not dry_run:
-            client.create_folder(identity, USERS_PATH)
+            client.create_folder(name, USERS_PATH)
     if not pending:
         lines.append(f"{identity}: already in sync")
         return lines
@@ -368,7 +379,10 @@ def build_parser() -> argparse.ArgumentParser:
             "  bash deploy/sync-infisical-users.sh --dry-run"
         ),
     )
-    parser.add_argument("--identity", help="agent slug for /users/<identity>; required with --file when the file has no IDENTITY")
+    parser.add_argument(
+        "--identity",
+        help="agent slug; the Infisical folder is that slug with each . replaced by -. Required with --file when the file has no IDENTITY",
+    )
     parser.add_argument("--file", help="one deploy/users credential file to push")
     parser.add_argument("--users-dir", default=str(DEFAULT_USERS_DIR), help="directory of credential files (default: deploy/users, or rollouts/$ROLLOUT/users)")
     parser.add_argument("--env-file", default=str(DEFAULT_ENV_FILE), help="env file with Infisical credentials (default: .env, or rollouts/$ROLLOUT/.env)")

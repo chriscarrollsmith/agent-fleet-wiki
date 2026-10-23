@@ -225,6 +225,22 @@ class SyncTests(unittest.TestCase):
                 with self.assertRaises(SystemExit):
                     sync.validate_slug(slug)
         sync.validate_slug("deepseek-flash-4.1-pi-crime-agent")
+        self.assertEqual(sync.folder_name("deepseek-flash-4.1-pi-crime-agent"), "deepseek-flash-4-1-pi-crime-agent")
+
+    def test_dotted_slug_uses_the_hyphenated_folder(self) -> None:
+        identity = "deepseek-flash-4.1-pi-crime-agent"
+        folder = "deepseek-flash-4-1-pi-crime-agent"
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "agent@example.com.env"
+            path.write_text(credential_text(SAMPLE), encoding="utf-8")
+            first = self.run_main(path, identity=identity)
+            second = self.run_main(path)
+            recorded = path.read_text(encoding="utf-8")
+        self.assertIn(f"{identity}: created /users/{folder}", first)
+        self.assertIn(f"{identity}: already in sync", second)
+        self.assertEqual(InfisicalHandler.secrets[folder], SAMPLE)
+        self.assertNotIn(identity, InfisicalHandler.folders)
+        self.assertIn(f"IDENTITY={identity}", recorded)
 
     def test_missing_project_id_refuses_before_login(self) -> None:
         with TemporaryDirectory() as tmp:

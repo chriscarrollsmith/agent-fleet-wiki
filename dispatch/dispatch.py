@@ -56,6 +56,17 @@ def render_command(command: str, prompt: str) -> str:
     return command.replace("{prompt}", shlex.quote(prompt))
 
 
+def close_stdin(sb: modal.Sandbox) -> None:
+    """Signal EOF on the sandbox stdin.
+
+    ``pi --print`` reads stdin until EOF before it starts the model call.
+    Modal leaves that stream open, so the agent waits until the sandbox
+    timeout unless the dispatcher closes it.
+    """
+    sb.stdin.write_eof()
+    sb.stdin.drain()
+
+
 def dispatch_agent(
     install_command: str | None,
     command: str,
@@ -65,12 +76,43 @@ def dispatch_agent(
     copies: list[tuple[str, str]] | None = None,
     setup_command: str | None = None,
     timeout: int = 3600,
+    detach: bool = False,
 ) -> int:
-    """Run an agent in a fresh sandbox; stream its output and return the exit code."""
+    """Run an agent in a fresh sandbox.
+
+    The default waits for the agent, streams its output, and returns the exit
+    code. With ``detach=True`` the sandbox is started on the container
+    filesystem, its id is printed, and this process returns while the sandbox
+    keeps running. An ephemeral volume cannot be used for that: its heartbeat
+    stops when the client exits.
+    """
     app = modal.App.lookup(APP_NAME, create_if_missing=True)
     secret_objs = [modal.Secret.from_dict({**(secrets or {}), "PROMPT": prompt})]
     secret_objs += [modal.Secret.from_name(name) for name in named_secrets or []]
     shell_command = render_command(command, prompt)
+    image = build_image(install_command, copies, setup_command)
+
+    if detach:
+        image = image.run_commands("mkdir -p /workspace")
+        sb = modal.Sandbox.create(
+            "bash",
+            "-lc",
+            shell_command,
+            app=app,
+            image=image,
+            secrets=secret_objs,
+            workdir=WORKDIR,
+            timeout=timeout,
+        )
+        try:
+            close_stdin(sb)
+        except Exception:
+            sb.terminate()
+            raise
+        print(f"[dispatch] detached {sb.object_id}", file=sys.stderr)
+        print(sb.object_id)
+        sb.detach()
+        return 0
 
     with modal.Volume.ephemeral() as volume:
         sb = modal.Sandbox.create(
@@ -78,7 +120,7 @@ def dispatch_agent(
             "-lc",
             shell_command,
             app=app,
-            image=build_image(install_command, copies, setup_command),
+            image=image,
             secrets=secret_objs,
             volumes={WORKDIR: volume},
             workdir=WORKDIR,
@@ -86,6 +128,7 @@ def dispatch_agent(
         )
         print(f"[dispatch] sandbox {sb.object_id} running: {shell_command}", file=sys.stderr)
         try:
+            close_stdin(sb)
             for line in sb.stdout:
                 print(line, end="", flush=True)
             for line in sb.stderr:
@@ -197,6 +240,11 @@ def main():
     parser.add_argument("--bookstack-env", action="append", default=[], metavar="PATH", help="Read BOOKSTACK_URL and BOOKSTACK_TOKEN from a local env file (repeatable)")
     parser.add_argument("--env-file", default=str(DEFAULT_ENV_FILE), metavar="PATH", help="Load local env vars (for bare --secret KEY) from PATH (default: repo .env)")
     parser.add_argument("--timeout", type=int, default=3600, help="Sandbox timeout in seconds (default 3600)")
+    parser.add_argument(
+        "--detach",
+        action="store_true",
+        help="Print the sandbox id and return while it keeps running. The scratch directory is the container filesystem.",
+    )
     args = parser.parse_args()
 
     apply_env_file(args.env_file)
@@ -228,6 +276,7 @@ def main():
             copies=copies,
             setup_command=args.setup,
             timeout=args.timeout,
+            detach=args.detach,
         )
     )
 

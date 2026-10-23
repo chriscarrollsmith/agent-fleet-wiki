@@ -22,8 +22,13 @@ uv run dispatch/dispatch.py \
 | `--env-file PATH` | Load local env vars into the dispatch process so a bare `--secret KEY` resolves from the file. Existing shell exports win. Default: the repo's `.env`. |
 | `--modal-secret NAME` | Attach a named Modal secret. Repeatable. |
 | `--timeout` | Sandbox timeout in seconds (default 3600). |
+| `--detach` | Print the sandbox id on stdout and exit. The sandbox keeps running until the command finishes or `--timeout`. Scratch files live on the container filesystem. |
 
-The base image is `node:22-bookworm` with Python 3.12. The agent's stdout and stderr are streamed back to you, and its exit code becomes the script's exit code. The volume is deleted when the run ends, and the sandbox is terminated when the agent command exits.
+The base image is `node:22-bookworm` with Python 3.12. By default the agent's stdout and stderr are streamed back to you, and its exit code becomes the script's exit code. The ephemeral volume is deleted when that run ends, and the sandbox is terminated when the agent command exits. `--detach` does not use that volume, because the volume's heartbeat stops when the dispatcher exits.
+
+After the sandbox starts, the dispatcher closes its stdin. `pi --print` reads that stream until EOF before it calls the model, and an open stdin leaves the agent idle until `--timeout`.
+
+The secrets check on a detached sandbox is `/proc/<pid>/environ` for the entrypoint process, the `bash -lc` Modal started or the `pi` child it spawned. Running `bookstack` from `Sandbox.exec` is not that check.
 
 You can also call it from Python: `from dispatch import dispatch_agent`, passing `copies=[(local, remote)]` and `secrets={...}`.
 
@@ -47,7 +52,7 @@ What each piece does:
 - **Agent utility** — `--copy` installs the client at `/usr/local/bin/bookstack`. The file's `#!/usr/bin/env python3` shebang runs it directly, so no wrapper is needed; the image already has `python3` on `PATH`. `--setup` marks it executable: Modal masks file modes on upload, and a Windows client uploads files as `0644` with no execute bit, so `chmod` is required. Adding `--setup` bakes the file into the image; without it the file is mounted at container startup. (The repo's `client/bookstack.sh` wrapper is redundant here.)
 - **API token** — `--bookstack-env bookstack.env` reads `BOOKSTACK_URL` and `BOOKSTACK_TOKEN` and injects them as container secrets. Create `bookstack.env` from `bookstack.env.example`. The files written by `deploy/create-user.sh` also work: pass `--bookstack-env deploy/state.env --bookstack-env deploy/users/<email>.env`, and only the URL and the token are used (the password and other keys are ignored). `--secret` overrides values from these files.
 - **Harness install** — `--install` installs Pi with npm. Pi needs Node 22.19 or newer, which the `node:22-bookworm` base image satisfies.
-- **Provider key and start command** — `--secret ANTHROPIC_API_KEY` copies your provider key into the sandbox; use `OPENAI_API_KEY` or another provider variable to match your model. `pi --print` runs the prompt non-interactively and exits. Pi does not prompt for tool approval, so the agent can read and edit files and run `bookstack` on its own. Add `--model <pattern>` (for example `pi --print --model sonnet`) if you want a specific model.
+- **Provider key and start command** — `--secret ANTHROPIC_API_KEY` copies your provider key into the sandbox; use `OPENAI_API_KEY` or another provider variable to match your model. `pi --print` runs the prompt non-interactively and exits. The dispatcher closes stdin so that call starts. Pi does not prompt for tool approval, so the agent can read and edit files and run `bookstack` on its own. Add `--model <pattern>` (for example `pi --print --model sonnet`) if you want a specific model. Pass `--detach` to print the sandbox id and return while the run continues.
 
 Inside the sandbox the agent can call the wiki directly, because its environment already holds `BOOKSTACK_URL` and `BOOKSTACK_TOKEN`:
 

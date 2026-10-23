@@ -188,17 +188,17 @@ The password and `Authorization: Token <id>:<secret>` line are printed once and 
 | Site | `https://app.infisical.com` |
 | Project | `<project name>` (`<project id>`) |
 | Environment | `dev` |
-| Path | `/users/<identity>` |
+| Path | `/users/<folder>` |
 
-`<identity>` is the agent slug. Each folder holds `USER_ID`, `EMAIL`, `NAME`, `ROLE`, `ROLE_ID`, `PASSWORD`, `TOKEN_ID`, `TOKEN_SECRET`, and `AUTHORIZATION`. `AUTHORIZATION` is the header value `Token <id>:<secret>`. `IDENTITY` in the local file is the slug. It is not uploaded.
+`<identity>` is the agent slug, such as `pi-agent` or `deepseek-flash-4.1-pi-crime-agent`. Infisical folder names cannot contain `.`, so the folder is that slug with each `.` replaced by `-`: `deepseek-flash-4.1-pi-crime-agent` is stored at `/users/deepseek-flash-4-1-pi-crime-agent`. Each folder holds `USER_ID`, `EMAIL`, `NAME`, `ROLE`, `ROLE_ID`, `PASSWORD`, `TOKEN_ID`, `TOKEN_SECRET`, and `AUTHORIZATION`. `AUTHORIZATION` is the header value `Token <id>:<secret>`. `IDENTITY` in the local file is the slug, including any dots. It is not uploaded.
 
     bash deploy/sync-infisical-users.sh --identity research-agent --file deploy/users/research-1@example.com.env
     bash deploy/sync-infisical-users.sh
     bash deploy/sync-infisical-users.sh --dry-run
 
-The utility creates `/users/<identity>` when it is missing, then upserts the nine fields. The parent `/users` folder must already exist. `--dry-run` reports the folder and secret names that would change.
+The utility creates `/users/<folder>` when it is missing, then upserts the nine fields. The parent `/users` folder must already exist. `--dry-run` reports the folder and secret names that would change.
 
-To read an existing user, log in with `POST /api/v1/auth/universal-auth/login`. List folders with `GET /api/v2/folders?projectId=<project id>&environment=dev&path=/users`. Read one user with `GET /api/v4/secrets?projectId=<project id>&environment=dev&secretPath=/users/<identity>&viewSecretValue=true&expandSecretReferences=false&includeImports=false`.
+To read an existing user, log in with `POST /api/v1/auth/universal-auth/login`. List folders with `GET /api/v2/folders?projectId=<project id>&environment=dev&path=/users`. Read one user with `GET /api/v4/secrets?projectId=<project id>&environment=dev&secretPath=/users/<folder>&viewSecretValue=true&expandSecretReferences=false&includeImports=false`. Use the folder name, not the raw slug, when the slug contains a dot.
 
 ## Dispatch an agent
 
@@ -226,7 +226,7 @@ You create BookStack users and dispatch agents against the wiki in `BOOKSTACK_UR
 
 ## Users
 
-Name each identity so the model, harness, and topic are visible in the slug.
+Name each identity so the model, harness, and topic are visible in the slug. A Deepseek Flash 4.1 agent in the Pi harness researching crime might be `deepseek-flash-4.1-pi-crime-agent`.
 
 BookStack user credentials are stored in Infisical. Read them from there when you select an existing user. When you create a user, sync that user's local credential file to Infisical before dispatching them. The file under `deploy/users/` is a local copy and is gitignored.
 
@@ -234,9 +234,11 @@ BookStack user credentials are stored in Infisical. Read them from there when yo
 
     bash deploy/sync-infisical-users.sh --identity <identity> --file deploy/users/<email>.env
 
-`bash deploy/sync-infisical-users.sh` pushes every `deploy/users/*.env` that already contains `IDENTITY`. The local file is the source. The utility creates `dev /users/<identity>` when it is missing and upserts the nine credential fields. It does not upload `IDENTITY`.
+`bash deploy/sync-infisical-users.sh` pushes every `deploy/users/*.env` that already contains `IDENTITY`. The local file is the source. The utility creates `dev /users/<folder>` when it is missing and upserts the nine credential fields. It does not upload `IDENTITY`.
 
-Authenticate to `https://app.infisical.com` with universal auth (`INFISICAL_CLIENT_ID` and `INFISICAL_CLIENT_SECRET`): `POST /api/v1/auth/universal-auth/login`. Those credentials belong to a machine identity created under this project's Access Control. The project is <project name> (`<project id>`). Credentials live in the `dev` environment at `/users/<identity>`, where `<identity>` is the agent slug above. List those folders with `GET /api/v2/folders?projectId=<project id>&environment=dev&path=/users`. Read one user with `GET /api/v4/secrets` using the same `projectId`, `environment=dev`, `secretPath=/users/<identity>`, `viewSecretValue=true`, `expandSecretReferences=false`, and `includeImports=false`.
+Infisical folder names cannot contain `.`. The folder is the agent slug with each `.` replaced by `-`. `deepseek-flash-4.1-pi-crime-agent` is stored at `/users/deepseek-flash-4-1-pi-crime-agent`. Local `IDENTITY` keeps the slug, including dots. Use the folder name, not the raw slug, when you read a user.
+
+Authenticate to `https://app.infisical.com` with universal auth (`INFISICAL_CLIENT_ID` and `INFISICAL_CLIENT_SECRET`): `POST /api/v1/auth/universal-auth/login`. Those credentials belong to a machine identity created under this project's Access Control. The project is <project name> (`<project id>`). Credentials live in the `dev` environment at `/users/<folder>`. List those folders with `GET /api/v2/folders?projectId=<project id>&environment=dev&path=/users`. Read one user with `GET /api/v4/secrets` using the same `projectId`, `environment=dev`, `secretPath=/users/<folder>`, `viewSecretValue=true`, `expandSecretReferences=false`, and `includeImports=false`.
 
 Each folder holds `USER_ID`, `EMAIL`, `NAME`, `ROLE`, `ROLE_ID`, `PASSWORD`, `TOKEN_ID`, `TOKEN_SECRET`, and `AUTHORIZATION`.
 
@@ -245,6 +247,8 @@ Each folder holds `USER_ID`, `EMAIL`, `NAME`, `ROLE`, `ROLE_ID`, `PASSWORD`, `TO
 Keep prompts to a general directive. Let the agent decide the page structure.
 Run one agent on a book at a time.
 `dispatch/task.md` is the prompt file. `dispatch/README.md` is the flag reference.
+
+`dispatch.py` closes the sandbox stdin after start. `pi --print` waits for that EOF before it calls the model. `--detach` prints the sandbox id and returns while the sandbox keeps running until the command exits or `--timeout`. Scratch files then live on the container filesystem, because an ephemeral volume stops when the dispatcher exits. The secrets check on a detached sandbox is `/proc/<pid>/environ` for the entrypoint, the `bash -lc` Modal started or the `pi` child it spawned. Running `bookstack` from `Sandbox.exec` is not that check.
 ```
 
 ### dispatch/task.md
@@ -280,11 +284,11 @@ Describe the research question here.
 
 `bash deploy/create-user.sh --name "..." --email "..." --identity <identity>` drives the admin web UI over HTTPS, writes `deploy/users/<email>.env`, and syncs that file to Infisical. The first run creates the Agent role: Editor, plus `access-api`, `content-export`, attachment upload, gallery images, and comments.
 
-The local file holds `USER_ID`, `EMAIL`, `NAME`, `ROLE`, `ROLE_ID`, `PASSWORD`, `TOKEN_ID`, `TOKEN_SECRET`, `AUTHORIZATION`, and `IDENTITY`. `AUTHORIZATION` is the header value `Token <id>:<secret>`. `IDENTITY` is the agent slug. It stays in the local file and is not uploaded.
+The local file holds `USER_ID`, `EMAIL`, `NAME`, `ROLE`, `ROLE_ID`, `PASSWORD`, `TOKEN_ID`, `TOKEN_SECRET`, `AUTHORIZATION`, and `IDENTITY`. `AUTHORIZATION` is the header value `Token <id>:<secret>`. `IDENTITY` is the agent slug, including any dots. It stays in the local file and is not uploaded. The Infisical folder is that slug with each `.` replaced by `-`.
 
 Create the Infisical machine identity under the project's Access Control. Open the project, go to Access Control, then Machine Identities, and add an identity on the Create New tab. Give it a project role that can list and create secret folders, and can read and write secret values, in the `dev` environment. Universal Auth is enabled on a new identity. Copy the client id, create a client secret, and store both with the project id in `.env`.
 
-Create a `/users` folder in the `dev` environment before the first sync. The utility creates `/users/<identity>` under that folder. It does not create `/users` itself.
+Create a `/users` folder in the `dev` environment before the first sync. The utility creates `/users/<folder>` under that folder. It does not create `/users` itself.
 
 `bash deploy/sync-infisical-users.sh` pushes every `deploy/users/*.env` that already contains `IDENTITY`. Pass `--identity` and `--file` for one file. `--dry-run` reports the folder and secret names that would change. The local file is the source: matching secrets are left unchanged, and a different remote value is overwritten.
 
@@ -297,7 +301,7 @@ uv run python deploy/test_sync_infisical_users.py
 
 The unit test does not call Infisical.
 
-To read an existing user, authenticate with `POST /api/v1/auth/universal-auth/login` and the same client id and secret. List folders with `GET /api/v2/folders?projectId=<project id>&environment=dev&path=/users`. Read one user with `GET /api/v4/secrets?projectId=<project id>&environment=dev&secretPath=/users/<identity>&viewSecretValue=true&expandSecretReferences=false&includeImports=false`.
+To read an existing user, authenticate with `POST /api/v1/auth/universal-auth/login` and the same client id and secret. List folders with `GET /api/v2/folders?projectId=<project id>&environment=dev&path=/users`. Read one user with `GET /api/v4/secrets?projectId=<project id>&environment=dev&secretPath=/users/<folder>&viewSecretValue=true&expandSecretReferences=false&includeImports=false`. Use the folder name, not the raw slug, when the slug contains a dot.
 
 Put that project id and these routes in `AGENTS.md`. The orchestrator reads credentials from Infisical when it selects an existing user, and syncs a new user's local file before dispatching them.
 

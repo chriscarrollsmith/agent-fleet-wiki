@@ -86,7 +86,7 @@ only when that role already has `access-api`.
 is created under the Infisical project's Access Control. Its client id, client
 secret, and project id are `INFISICAL_CLIENT_ID`, `INFISICAL_CLIENT_SECRET`,
 and `INFISICAL_PROJECT_ID`. The local file remains the source. The utility
-writes `dev /users/<identity>` and does not upload `IDENTITY`.
+writes `dev /users/<folder>` and does not upload `IDENTITY`. Infisical folder names cannot contain `.`, so each `.` in the slug becomes `-`: `deepseek-flash-4.1-pi-crime-agent` is stored at `/users/deepseek-flash-4-1-pi-crime-agent`. The local `IDENTITY` keeps the slug, including dots.
 
 ```bash
 bash deploy/create-user.sh \
