@@ -305,6 +305,8 @@ To read an existing user, authenticate with `POST /api/v1/auth/universal-auth/lo
 
 Put that project id and these routes in `AGENTS.md`. The orchestrator reads credentials from Infisical when it selects an existing user, and syncs a new user's local file before dispatching them.
 
+To rotate a wiki that is already running, use [Rotate a BookStack rollout](rotate-credentials.md). That command uses the Infisical service token in `INFISICAL_TOKEN`. The sync command above uses the universal-auth client id and secret, and it does not rotate passwords.
+
 ### Check the boundary
 
 From the orchestration folder:

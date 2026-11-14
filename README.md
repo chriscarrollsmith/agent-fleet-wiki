@@ -156,3 +156,12 @@ was included can gain it, along with image upload, with:
 ```bash
 bash deploy/create-user.sh --sync-role
 ```
+
+## 6. Rotate credentials
+
+`deploy/rotate-credentials.sh` replaces one wiki's SSH key, attachment key, admin password, and Infisical `dev /users` accounts. People who are not in Infisical are named with `--human` and get an email. The order, the checks, and the email text are in [docs/rotate-credentials.md](docs/rotate-credentials.md).
+
+```bash
+ROLLOUT=knowledge-workers bash deploy/rotate-credentials.sh all --dry-run
+ROLLOUT=knowledge-workers bash deploy/rotate-credentials.sh all --human person@example.com
+```
