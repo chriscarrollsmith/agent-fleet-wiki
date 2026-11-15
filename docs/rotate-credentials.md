@@ -15,22 +15,22 @@ Run the stages in this order. Each stage leaves the previous credential in place
 | Stage | What it replaces | Where the new value is kept |
 | --- | --- | --- |
 | `ssh-key` | The EC2 SSH key and the AWS key pair named `KEY_NAME` | `bookstack.pem` and `bookstack.pem.pub` |
-| `s3` | The attachment user's access key | `bookstack-s3.env` and `/var/www/bookstack/.env` on the instance |
-| `admin` | The BookStack admin password | `ADMIN_PASSWORD` in `.env` |
+| `s3` | The attachment user's access key | Infisical `dev /wiki` and `/var/www/bookstack/.env` on the instance |
+| `admin` | The BookStack admin password | `ADMIN_PASSWORD` in Infisical `dev /wiki` |
 | `infisical` | Every account under Infisical `dev /users` | That folder, and a matching file in `users/` when one already exists |
-| `humans` | Named people who are not in `/users` | The wiki, `users/<email>.env`, and an email |
+| `humans` | Named people who are not in `/users` | The wiki, Infisical `dev /humans/<folder>`, and an email |
 
 The instance database password, `APP_KEY`, and mail password are not in the rollout directory. This command does not rotate them.
 
-Infisical here is read and written with the service token in `INFISICAL_TOKEN`. `deploy/sync-infisical-users.sh` is a different path: it pushes local files with the universal-auth client id and secret, and it does not rotate anything.
+Infisical here is read and written with the service token in `INFISICAL_TOKEN`. `deploy/sync-infisical-users.sh` is a different path: it uploads a local credential file with that same token, then removes the file. It does not rotate anything.
 
 ## Before you start
 
-The rollout `.env` needs `AWS_PROFILE`, `AWS_DEFAULT_REGION`, `BUCKET`, `IAM_USER`, `KEY_NAME`, `ADMIN_EMAIL`, and `BOOKSTACK_URL`. `state.env` needs `EIP`, `HOST`, and `INSTANCE_ID`. The SSH private key has to log in as `ubuntu@<EIP>`.
+The rollout `.env` needs `INFISICAL_TOKEN`. Infisical `dev /wiki` needs `AWS_PROFILE`, `AWS_DEFAULT_REGION`, `BUCKET`, `ADMIN_EMAIL`, `BOOKSTACK_URL`, `STORAGE_S3_KEY`, and `STORAGE_S3_SECRET`. `KEY_NAME` and `IAM_USER` are optional. `state.env` needs `EIP`, `HOST`, and `INSTANCE_ID`. The SSH private key has to log in as `ubuntu@<EIP>`.
 
-For the Infisical stage, `INFISICAL_TOKEN` is a service token (`st.…`) created under the project's Access Control, with read and write on the `dev` environment. The token's project id comes from `GET /api/v2/service-token`. If `INFISICAL_PROJECT_ID` is also set, it must be that same id.
+`INFISICAL_TOKEN` is a service token (`st.…`) created under the project's Access Control, with read and write on the `dev` environment. The token's project id comes from `GET /api/v2/service-token`.
 
-For the human stage, set `RESEND_API_KEY` and `RESEND_FROM`. `RESEND_FROM` looks like `Your Name <you@example.com>`. The domain has to be verified in Resend. The message is sent with curl. Python's HTTP client is blocked by Cloudflare in front of Resend with error 1010.
+For the human stage, set `RESEND_API_KEY` and `RESEND_FROM` in `dev /wiki`. `RESEND_FROM` looks like `Your Name <you@example.com>`. The domain has to be verified in Resend. The message is sent with curl. Python's HTTP client is blocked by Cloudflare in front of Resend with error 1010.
 
 ```bash
 aws sso login --profile "$AWS_PROFILE"
@@ -71,11 +71,11 @@ A failure before the old key is removed deletes the unused new private key. The 
 
 An IAM user can hold two access keys. The command creates a second key and lists the bucket with it. A new key often answers `InvalidAccessKeyId` for a few seconds, so the list is retried. If the list still fails, the new key is deleted and the old key stays in place.
 
-The key is then written into `/var/www/bookstack/.env`. BookStack has to answer a HeadObject on `uploads/files/` with that key. If it does not, the previous key is written back and the new key is deleted. On success, php-fpm is restarted, `bookstack-s3.env` is updated, and the previous access key is deleted. The user is left with one key.
+The key is then written into `/var/www/bookstack/.env`. BookStack has to answer a HeadObject on `uploads/files/` with that key. If it does not, the previous key is written back and the new key is deleted. On success, php-fpm is restarted, `STORAGE_S3_KEY` and `STORAGE_S3_SECRET` are updated in Infisical `dev /wiki`, and the previous access key is deleted. The user is left with one key. If the Infisical write fails, the new key is left in `pending-s3.env`.
 
 ### Admin password
 
-`deploy/rotate-bookstack.php` sets the password on the instance with BookStack's user repository, checks the stored hash, and clears that user's server session. The new password is written to `ADMIN_PASSWORD` before the web login is tried, so a login problem does not leave the new password only in memory. The web login then has to open `/settings/users`.
+`deploy/rotate-bookstack.php` sets the password on the instance with BookStack's user repository, checks the stored hash, and clears that user's server session. The new password is written to `ADMIN_PASSWORD` in Infisical `dev /wiki` before the web login is tried, so a login problem does not leave the new password only in memory. If that write fails, the password is left in `pending-admin.env`. The web login then has to open `/settings/users`.
 
 ### Infisical users
 
@@ -87,11 +87,11 @@ The first account is rotated and read back from Infisical before any other accou
 - the new token calls `GET /api/system` when the account has a token
 - Infisical returns the same `PASSWORD`, `TOKEN_ID`, `TOKEN_SECRET`, and `AUTHORIZATION`
 
-`AUTHORIZATION` is `Token <id>:<secret>`. An existing `users/<email>.env` is updated. A new local file is written only when BookStack changed and the Infisical write did not succeed, so the new password is not left only in the process. That failure stops the command after the accounts already reported.
+`AUTHORIZATION` is `Token <id>:<secret>`. A local `users/<email>.env` is removed after the Infisical read-back matches. A local file is written only when BookStack changed and the Infisical write did not succeed, so the new password is not left only in the process. That failure stops the command after the accounts already reported.
 
 ### People who are not agents
 
-Frank and Sravan, on the wiki this procedure was first run against, were not in `/users`. Pass `--human` for each such person. The command looks them up by email, rotates the password only, writes `users/<email>.env`, and then sends the notice below. The file is written before the send, so a mail failure does not leave the new password only in memory. It does not send mail if the password change did not succeed.
+Frank and Sravan, on the wiki this procedure was first run against, were not in `/users`. Pass `--human` for each such person. The command looks them up by email, rotates the password only, stores it at `dev /humans/<folder>`, and then sends the notice below. `frank@example.com` is stored at `/humans/frank-example-com`, with `EMAIL` and `PASSWORD` in that folder. The Infisical write happens before the send, so a mail failure does not leave the new password only in memory. If the write fails, the password is left in `users/<email>.env` and no mail is sent. It does not send mail if the password change did not succeed.
 
 Resend is curl against `POST https://api.resend.com/emails`. The From address is `RESEND_FROM`. The sign-off is the first word of that display name. The subject is `Your password for <host> was reset`.
 
@@ -115,7 +115,7 @@ Say that the exposure is unknown. The first draft of this notice stated it as a 
 
 ## One wiki from a checkout
 
-Without `ROLLOUT`, the same command reads `./.env`, `deploy/state.env`, `deploy/bookstack.pem`, `deploy/bookstack-s3.env`, and `deploy/users/`.
+Without `ROLLOUT`, the same command reads `./.env`, `deploy/state.env`, `deploy/bookstack.pem`, and `deploy/users/`. Wiki settings come from Infisical `dev /wiki`.
 
 ```bash
 bash deploy/rotate-credentials.sh --dry-run

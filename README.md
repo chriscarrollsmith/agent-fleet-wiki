@@ -8,8 +8,10 @@ This checkout deploys one wiki and keeps the SSH key. To stand up another wiki, 
 
 ```bash
 cp .env.example .env
-# edit .env: AWS_PROFILE, AWS_DEFAULT_REGION, BUCKET (globally unique), ADMIN_EMAIL
+# edit .env: INFISICAL_TOKEN
 ```
+
+`.env` holds the Infisical service token. Wiki settings (`AWS_PROFILE`, `AWS_DEFAULT_REGION`, `BUCKET`, `ADMIN_EMAIL`, and the values the deploy writes later) live in that token's project at `dev /wiki`.
 
 ### Several wikis from one checkout
 
@@ -18,18 +20,15 @@ gitignored:
 
 ```
 rollouts/<name>/
-  .env               # AWS profile, bucket, ADMIN_EMAIL, ADMIN_PASSWORD, BOOKSTACK_URL
+  .env               # INFISICAL_TOKEN only
   state.env          # VPC, SUBNET, SG, INSTANCE_ID, ALLOC, EIP, HOST
   bookstack.pem      # SSH key for ubuntu@<EIP>
-  bookstack-s3.env   # attachment bucket access key
-  users/             # deploy/create-user.sh output
+  users/             # a credential file left behind when an Infisical write fails
 ```
 
 Set `ROLLOUT` to choose one. Every deploy and user script, and
-`dispatch/dispatch.py`, then reads and writes that directory instead of
-`.env` and `deploy/`. `INFISICAL_PROJECT_ID`, `INFISICAL_CLIENT_ID`, and
-`INFISICAL_CLIENT_SECRET` in that `.env` are what
-`deploy/sync-infisical-users.sh` uses for that wiki.
+`dispatch/dispatch.py`, then reads that directory's token instead of `.env`.
+The token's project holds that wiki's settings at `dev /wiki`.
 
 ```bash
 ROLLOUT=knowledge-workers bash deploy/run.sh --from 06
@@ -53,16 +52,16 @@ bash deploy/run.sh            # full run; output is teed to logs/deploy-*.log
 bash deploy/run.sh --from 05  # resume from a stage
 ```
 
-Stages are idempotent, so re-running is safe. Generated artifacts
-(`deploy/bookstack.pem`, `deploy/bookstack-s3.env`) and the admin password
-(added to `.env` as `ADMIN_PASSWORD`) are gitignored.
+Stages are idempotent, so re-running is safe. The SSH key
+(`deploy/bookstack.pem`) is gitignored. The admin password and the attachment
+key are written to Infisical `dev /wiki`.
 
 ## 4. Create an agent user
 
 BookStack has no API endpoint for API tokens, so a token has to be created
 through the admin UI. `deploy/create-user.sh` does this over HTTPS, driving
 the same routes a browser uses. It needs only the site URL and the admin
-credentials, which are already in `.env` (`BOOKSTACK_URL`, `ADMIN_EMAIL`,
+credentials, which are in Infisical `dev /wiki` (`BOOKSTACK_URL`, `ADMIN_EMAIL`,
 `ADMIN_PASSWORD`). No SSH, AWS, or instance access is required, so this
 works even when the AWS SSO session has expired.
 
@@ -77,16 +76,16 @@ bash deploy/create-user.sh \
   --email "agent-user@example.com"
 ```
 
-The password and `Authorization: Token <id>:<secret>` line are printed once
-and written under `deploy/users/`, which is gitignored. Re-running the same
-email fails, because the user already exists. An existing `--role` is reused
-only when that role already has `access-api`.
+The password and `Authorization: Token <id>:<secret>` line are printed once.
+Re-running the same email fails, because the user already exists. An existing
+`--role` is reused only when that role already has `access-api`.
 
-`--identity` also stores those credentials in Infisical. The machine identity
-is created under the Infisical project's Access Control. Its client id, client
-secret, and project id are `INFISICAL_CLIENT_ID`, `INFISICAL_CLIENT_SECRET`,
-and `INFISICAL_PROJECT_ID`. The local file remains the source. The utility
-writes `dev /users/<folder>` and does not upload `IDENTITY`. Infisical folder names cannot contain `.`, so each `.` in the slug becomes `-`: `deepseek-flash-4.1-pi-crime-agent` is stored at `/users/deepseek-flash-4-1-pi-crime-agent`. The local `IDENTITY` keeps the slug, including dots.
+`--identity` stores those credentials in Infisical. The service token in
+`INFISICAL_TOKEN` is what the utility uses. It writes `dev /users/<folder>`
+and does not upload `IDENTITY`. Infisical folder names cannot contain `.`, so
+each `.` in the slug becomes `-`: `deepseek-flash-4.1-pi-crime-agent` is stored
+at `/users/deepseek-flash-4-1-pi-crime-agent`. A failed write leaves the
+credentials in `deploy/users/`.
 
 ```bash
 bash deploy/create-user.sh \
@@ -99,8 +98,9 @@ bash deploy/sync-infisical-users.sh --dry-run
 ```
 
 `deploy/sync-infisical-users.sh` with no arguments pushes every
-`deploy/users/*.env` that already contains `IDENTITY`. The orchestrator prompt
-that reads these credentials back is in [docs/provision.md](docs/provision.md).
+`deploy/users/*.env` that already contains `IDENTITY`, then removes each file
+it uploaded. The orchestrator prompt that reads these credentials back is in
+[docs/provision.md](docs/provision.md).
 
 An existing Agent role can be given those permissions without creating
 another user:
@@ -119,7 +119,7 @@ bash deploy/create-user-ssh.sh \
   --email "agent-user@example.com"
 ```
 
-That fallback writes the same local file and does not call Infisical. Sync it afterwards with `deploy/sync-infisical-users.sh`.
+That fallback writes the same local file and does not call Infisical. Sync it afterwards with `deploy/sync-infisical-users.sh`. A successful sync removes the file.
 
 The new user can see books the Editor role can see. A book with its own
 permission list must include the Agent role or the API will not see it.

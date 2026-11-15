@@ -8,6 +8,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import infisical_api
 import rotate_credentials as rotate
 
 
@@ -72,8 +73,48 @@ class PureTests(unittest.TestCase):
         rows = rotate.json_lines('rotated later\n{"ok": true, "email": "a@example.com"}\n')
         self.assertEqual(rows, [{"ok": True, "email": "a@example.com"}])
 
+    def test_human_folder_and_env_quoting(self) -> None:
+        self.assertEqual(infisical_api.human_folder("Frank@Example.com"), "frank-example-com")
+        self.assertEqual(infisical_api.format_env({"RESEND_FROM": "Ada Lovelace <ada@example.com>"}), "RESEND_FROM=$'Ada Lovelace <ada@example.com>'\n")
+
     def test_chunks_cover_the_tail(self) -> None:
         self.assertEqual(rotate.chunks([1, 2, 3, 4, 5], 2), [[1, 2], [3, 4], [5]])
+
+    def test_commit_stores_the_wiki_secret_and_leaves_the_token_file(self) -> None:
+        with TemporaryDirectory() as tmp:
+            env = Path(tmp) / ".env"
+            env.write_text("INFISICAL_TOKEN=st.test\n", encoding="utf-8")
+            pending = Path(tmp) / "pending-admin.env"
+            client = FakeInfisical()
+            rotate.commit_secrets(client, "/wiki", {"ADMIN_PASSWORD": "new-secret"}, pending)
+            self.assertEqual(client.stored["/wiki"]["ADMIN_PASSWORD"], "new-secret")
+            self.assertFalse(pending.exists())
+            self.assertEqual(env.read_text(encoding="utf-8"), "INFISICAL_TOKEN=st.test\n")
+
+    def test_commit_mismatch_writes_a_pending_file(self) -> None:
+        with TemporaryDirectory() as tmp:
+            pending = Path(tmp) / "pending-admin.env"
+            with self.assertRaises(rotate.RotationError):
+                rotate.commit_secrets(FakeInfisical(mismatch=True), "/wiki", {"ADMIN_PASSWORD": "new-secret"}, pending)
+            self.assertEqual(rotate.load_env_file(pending)["ADMIN_PASSWORD"], "new-secret")
+
+
+class FakeInfisical:
+    def __init__(self, mismatch: bool = False):
+        self.stored: dict[str, dict[str, str]] = {}
+        self.mismatch = mismatch
+
+    def ensure_folder(self, path: str) -> None:
+        self.stored.setdefault(path, {})
+
+    def upsert(self, path: str, updates: dict[str, str]) -> None:
+        self.stored.setdefault(path, {}).update(updates)
+
+    def secrets(self, path: str) -> dict[str, str]:
+        found = dict(self.stored.get(path, {}))
+        if self.mismatch:
+            found["ADMIN_PASSWORD"] = "other"
+        return found
 
 
 if __name__ == "__main__":

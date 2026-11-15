@@ -14,9 +14,10 @@ Usage:
   uv run deploy/create-user-http.py --sync-role
 
 The default role, Agent, is a copy of Editor plus the permissions the API
-needs for normal research work. Credentials are printed once and written to
-deploy/users/ (gitignored). Pass --identity to sync them to Infisical at
-dev /users/<folder>, the slug with each dot replaced by a hyphen. See docs/provision.md.
+needs for normal research work. Credentials are printed once. Pass --identity
+to store them in Infisical at dev /users/<folder>, the slug with each dot
+replaced by a hyphen. A failed Infisical write leaves a file under deploy/users/.
+See docs/provision.md.
 """
 
 from __future__ import annotations
@@ -28,12 +29,13 @@ import os
 import re
 import secrets
 import string
-import subprocess
 import sys
 import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
+
+from infisical_api import USERS_PATH, WIKI_PATH, InfisicalClient, InfisicalError, folder_name, token_from_env
 
 ROOT = Path(__file__).resolve().parent.parent
 # ROLLOUT=<name> reads and writes rollouts/<name>/, matching deploy/lib.sh.
@@ -161,7 +163,7 @@ def login(web: Web, email: str, password: str) -> None:
     web.post("/login", {"_token": token, "email": email, "password": password})
     final_url, _ = web.get("/settings/users")
     if "/login" in final_url:
-        die("Admin login failed. Check ADMIN_EMAIL and ADMIN_PASSWORD in .env.")
+        die("Admin login failed. Check ADMIN_EMAIL and ADMIN_PASSWORD in Infisical dev /wiki.")
 
 
 def list_roles(web: Web) -> dict[str, int]:
@@ -322,28 +324,54 @@ def validate_slug(identity: str) -> None:
         die("--identity must be an agent slug: letters, digits, and . _ -")
 
 
+USER_SECRET_KEYS = (
+    "USER_ID",
+    "EMAIL",
+    "NAME",
+    "ROLE",
+    "ROLE_ID",
+    "PASSWORD",
+    "TOKEN_ID",
+    "TOKEN_SECRET",
+    "AUTHORIZATION",
+)
+
+
 def require_infisical(env_file: str) -> None:
-    values = load_env_file(Path(env_file))
-    client_id = os.environ.get("INFISICAL_CLIENT_ID", "") or values.get("INFISICAL_CLIENT_ID", "")
-    client_secret = os.environ.get("INFISICAL_CLIENT_SECRET", "") or values.get("INFISICAL_CLIENT_SECRET", "")
-    project_id = os.environ.get("INFISICAL_PROJECT_ID", "") or values.get("INFISICAL_PROJECT_ID", "")
-    if not client_id or not client_secret or not project_id:
-        die(
-            "Set INFISICAL_CLIENT_ID, INFISICAL_CLIENT_SECRET, and INFISICAL_PROJECT_ID "
-            f"in the environment or {env_file} before passing --identity."
-        )
+    try:
+        token_from_env(Path(env_file))
+    except InfisicalError as exc:
+        die(str(exc))
 
 
-def push_infisical(identity: str, user_file: Path, env_file: str) -> None:
-    script = Path(__file__).with_name("sync_infisical_users.py")
-    result = subprocess.run(
-        [sys.executable, str(script), "--identity", identity, "--file", str(user_file), "--env-file", env_file],
-    )
-    if result.returncode != 0:
+def push_infisical(identity: str, fields: dict[str, str], env_file: str, users_dir: Path, email: str) -> None:
+    name = folder_name(identity)
+    secret_path = f"{USERS_PATH}/{name}"
+    pending = {key: fields[key] for key in USER_SECRET_KEYS}
+    try:
+        client = InfisicalClient.from_token(token_from_env(Path(env_file)))
+        client.ensure_folder(secret_path)
+        client.upsert(secret_path, pending)
+        remote = client.secrets(secret_path)
+    except InfisicalError as exc:
+        saved = dict(pending)
+        saved["IDENTITY"] = identity
+        out_file = write_user_file(users_dir, email, saved)
         die(
-            f"Saved credentials to {user_file}, but the Infisical sync failed. "
-            f"Re-run: bash deploy/sync-infisical-users.sh --identity {identity} --file {user_file}"
+            f"Infisical did not store the new user. Credentials were written to {out_file}. {exc} "
+            f"Re-run: bash deploy/sync-infisical-users.sh --identity {identity} --file {out_file}"
         )
+    mismatched = [key for key in USER_SECRET_KEYS if remote.get(key) != pending[key]]
+    if mismatched:
+        saved = dict(pending)
+        saved["IDENTITY"] = identity
+        out_file = write_user_file(users_dir, email, saved)
+        die(
+            f"Infisical read-back mismatch for {', '.join(mismatched)}. "
+            f"Credentials were written to {out_file}. "
+            f"Re-run: bash deploy/sync-infisical-users.sh --identity {identity} --file {out_file}"
+        )
+    print(f"Stored in Infisical at dev {secret_path}.")
 
 
 def create_user_and_token(
@@ -378,17 +406,17 @@ def create_user_and_token(
     if identity:
         fields["IDENTITY"] = identity
 
-    out_file = write_user_file(users_dir, email, fields)
-
     print(f"Created BookStack user {email} (id {user_id}) in role {role_name}.")
     print(f"Password: {password}")
     print(f"Authorization: {authorization}")
-    print(f"Saved to {out_file}")
     if identity:
-        push_infisical(identity, out_file, env_file)
+        push_infisical(identity, fields, env_file, users_dir, email)
     else:
+        out_file = write_user_file(users_dir, email, fields)
+        print(f"Saved to {out_file}")
         print(f"Sync to Infisical with: bash deploy/sync-infisical-users.sh --identity <identity> --file {out_file}")
-    print("Paste the Authorization line back. Do not commit deploy/users/.")
+        print(f"Do not commit {users_dir}.")
+    print("Paste the Authorization line back.")
 
 
 def validate_identity(name: str, email: str, role: str) -> None:
@@ -401,22 +429,26 @@ def validate_identity(name: str, email: str, role: str) -> None:
 
 
 def resolve_config(args: argparse.Namespace) -> tuple[str, str, str]:
-    values = load_env_file(Path(args.env_file))
-    values.update(load_env_file(Path(args.state_file)))
+    try:
+        client = InfisicalClient.from_token(token_from_env(Path(args.env_file)))
+        values = client.secrets(WIKI_PATH)
+    except InfisicalError as exc:
+        die(str(exc))
+    state = load_env_file(Path(args.state_file))
 
     url = args.url or values.get("BOOKSTACK_URL", "")
-    host = values.get("HOST", "")
+    host = state.get("HOST", "")
     if not url and host:
         url = host if host.startswith(("http://", "https://")) else f"https://{host}"
     if not url:
-        die(f"Set BOOKSTACK_URL in {args.env_file}, or pass --url.")
+        die("Set BOOKSTACK_URL in Infisical dev /wiki, or pass --url.")
 
     admin_email = args.admin_email or values.get("ADMIN_EMAIL", "")
     admin_password = args.admin_password or values.get("ADMIN_PASSWORD", "")
     if not admin_email:
-        die(f"Set ADMIN_EMAIL in {args.env_file}, or pass --admin-email.")
+        die("Set ADMIN_EMAIL in Infisical dev /wiki, or pass --admin-email.")
     if not admin_password:
-        die(f"Set ADMIN_PASSWORD in {args.env_file}, or pass --admin-password.")
+        die("Set ADMIN_PASSWORD in Infisical dev /wiki, or pass --admin-password.")
     return url, admin_email, admin_password
 
 
@@ -431,10 +463,9 @@ def build_parser() -> argparse.ArgumentParser:
             "attachment, image, and comment permissions the API requires.\n\n"
             "--sync-role adds those permissions to an existing role. It does not\n"
             "create a user or print a new token.\n\n"
-            "--identity stores the new credentials in Infisical at dev /users/<folder>\n"
-            "after the local file is written. Each dot in the slug becomes a hyphen\n"
-            "in that folder name. The machine identity is created under the project's\n"
-            "Access Control."
+            "--identity stores the new credentials in Infisical at dev /users/<folder>.\n"
+            "Each dot in the slug becomes a hyphen in that folder name. A failed\n"
+            "write leaves the credentials in the users directory."
         ),
     )
     parser.add_argument("--name", help="display name for the new user")
@@ -445,7 +476,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--url", help="BookStack base URL, overriding BOOKSTACK_URL")
     parser.add_argument("--admin-email", help="admin email, overriding ADMIN_EMAIL")
     parser.add_argument("--admin-password", help="admin password, overriding ADMIN_PASSWORD")
-    parser.add_argument("--env-file", default=str(DEFAULT_ENV_FILE), help="env file with admin settings (default: .env, or rollouts/$ROLLOUT/.env)")
+    parser.add_argument("--env-file", default=str(DEFAULT_ENV_FILE), help="env file with INFISICAL_TOKEN (default: .env, or rollouts/$ROLLOUT/.env)")
     parser.add_argument("--state-file", default=str(DEFAULT_STATE_FILE), help="deploy state file for HOST (default: deploy/state.env, or rollouts/$ROLLOUT/state.env)")
     parser.add_argument("--users-dir", default=str(DEFAULT_USERS_DIR), help="where to write the credentials file (default: deploy/users, or rollouts/$ROLLOUT/users)")
     return parser

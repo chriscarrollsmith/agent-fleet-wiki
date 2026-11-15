@@ -6,12 +6,19 @@ load_env
 : "${HOST:?Run deploy/05-instance.sh first}"
 : "${EIP:?Run deploy/05-instance.sh first}"
 
-if [[ ! -f "$SECRET_FILE" ]]; then
-  echo "Missing ${SECRET_FILE}. Run deploy/03-iam.sh first." >&2
-  exit 1
-fi
+require STORAGE_S3_KEY STORAGE_S3_SECRET STORAGE_S3_REGION STORAGE_S3_BUCKET
 
-scp_to_ubuntu "$SECRET_FILE" /tmp/bookstack-s3.env
+s3_file="$(mktemp)"
+chmod 600 "$s3_file"
+trap 'rm -f "$s3_file"' EXIT
+cat > "$s3_file" <<EOF
+STORAGE_S3_KEY=${STORAGE_S3_KEY}
+STORAGE_S3_SECRET=${STORAGE_S3_SECRET}
+STORAGE_S3_REGION=${STORAGE_S3_REGION}
+STORAGE_S3_BUCKET=${STORAGE_S3_BUCKET}
+EOF
+scp_to_ubuntu "$s3_file" /tmp/bookstack-s3.env
+rm -f "$s3_file"
 ssh_ubuntu sudo bash -s <<'REMOTE'
 set -euo pipefail
 cat > /etc/php/8.3/fpm/conf.d/99-bookstack-uploads.ini <<'EOF'

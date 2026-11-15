@@ -19,7 +19,7 @@ uv run dispatch/dispatch.py \
 | `--prompt` | The prompt. Use `@file.md` to read it from a file. |
 | `--secret KEY[=VALUE]` | Env var for the container. A bare `KEY` copies the value from your local environment. Repeatable. |
 | `--bookstack-env PATH` | Read `BOOKSTACK_URL` and `BOOKSTACK_TOKEN` from a local env file. Repeatable; later files and `--secret` win. |
-| `--env-file PATH` | Load local env vars into the dispatch process so a bare `--secret KEY` resolves from the file. Existing shell exports win. Default: the repo's `.env`. |
+| `--env-file PATH` | Read `INFISICAL_TOKEN` from PATH and load Infisical `dev /wiki`, so a bare `--secret KEY` resolves. Existing shell exports win. Default: the repo's `.env`. |
 | `--modal-secret NAME` | Attach a named Modal secret. Repeatable. |
 | `--timeout` | Sandbox timeout in seconds (default 3600). |
 | `--detach` | Print the sandbox id on stdout and exit. The sandbox keeps running until the command finishes or `--timeout`. Scratch files live on the container filesystem. |

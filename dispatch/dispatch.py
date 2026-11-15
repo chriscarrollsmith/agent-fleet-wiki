@@ -175,15 +175,28 @@ def load_env_file(path: str) -> dict[str, str]:
 
 
 def apply_env_file(path: str) -> None:
-    """Load KEY=VALUE pairs from a local env file into the process environment.
+    """Load Infisical dev /wiki into the process environment.
 
-    Existing environment variables win, so an explicitly exported value is not
-    clobbered. This lets a bare --secret KEY pick up OPENROUTER_API_KEY and
-    friends from the repo's .env file.
+    The env file contributes INFISICAL_TOKEN. Existing environment variables
+    win, so an explicitly exported value is not clobbered. A bare --secret KEY
+    then resolves OPENROUTER_API_KEY and the other wiki settings.
     """
-    if not path or not os.path.isfile(path):
+    file_values = load_env_file(path) if path and os.path.isfile(path) else {}
+    token = os.environ.get("INFISICAL_TOKEN", "") or file_values.get("INFISICAL_TOKEN", "")
+    if not token:
         return
-    for key, value in load_env_file(path).items():
+    os.environ.setdefault("INFISICAL_TOKEN", token)
+    deploy = ROOT / "deploy"
+    if str(deploy) not in sys.path:
+        sys.path.insert(0, str(deploy))
+    import infisical_api
+
+    try:
+        client = infisical_api.InfisicalClient.from_token(token)
+        secrets = client.secrets(infisical_api.WIKI_PATH)
+    except infisical_api.InfisicalError as exc:
+        raise SystemExit(str(exc)) from None
+    for key, value in secrets.items():
         os.environ.setdefault(key, value)
 
 
@@ -238,7 +251,7 @@ def main():
     parser.add_argument("--copy", action="append", default=[], metavar="SRC[:DEST]", help="Copy a local file or directory into the image at DEST, default /opt/<name> (repeatable)")
     parser.add_argument("--setup", help="Shell command to run in the image after --copy (for example, chmod on a copied script)")
     parser.add_argument("--bookstack-env", action="append", default=[], metavar="PATH", help="Read BOOKSTACK_URL and BOOKSTACK_TOKEN from a local env file (repeatable)")
-    parser.add_argument("--env-file", default=str(DEFAULT_ENV_FILE), metavar="PATH", help="Load local env vars (for bare --secret KEY) from PATH (default: repo .env)")
+    parser.add_argument("--env-file", default=str(DEFAULT_ENV_FILE), metavar="PATH", help="Env file with INFISICAL_TOKEN. Bare --secret KEY resolves from Infisical dev /wiki (default: repo .env)")
     parser.add_argument("--timeout", type=int, default=3600, help="Sandbox timeout in seconds (default 3600)")
     parser.add_argument(
         "--detach",

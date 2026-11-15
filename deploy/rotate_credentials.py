@@ -3,8 +3,8 @@
 
 The stages match the capital-region rotation: SSH key, attachment key, admin
 password, every Infisical user under dev /users, then named human accounts.
-Secret values are written to the rollout files, Infisical, and the human
-notice. They are not printed.
+New secrets are written to Infisical. A failed Infisical write leaves a local
+file so the new value is not only in the process. Values are not printed.
 
 Usage:
   ROLLOUT=name bash deploy/rotate-credentials.sh --dry-run
@@ -35,10 +35,12 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+from infisical_api import HUMANS_PATH, USERS_PATH, WIKI_PATH, InfisicalClient, InfisicalError, human_folder
+from infisical_api import service_token_project as infisical_project
+
 ROOT = Path(__file__).resolve().parent.parent
 HERE = Path(__file__).resolve().parent
 REMOTE_PHP = HERE / "rotate-bookstack.php"
-INFISICAL_API = "https://app.infisical.com"
 BOOKSTACK_DIR = "/var/www/bookstack"
 CHUNK = 10
 
@@ -133,10 +135,10 @@ def assert_single_instance(instance_ids: list[str], expected: str) -> None:
 
 
 def service_token_project(payload: dict) -> str:
-    project = payload.get("projectId") or payload.get("workspace") or ""
-    if not isinstance(project, str) or not project:
-        raise RotationError("Infisical service token did not include a project id.")
-    return project
+    try:
+        return infisical_project(payload)
+    except InfisicalError as exc:
+        raise RotationError(str(exc)) from None
 
 
 def access_key_still_propagating(stderr: str) -> bool:
@@ -196,20 +198,27 @@ class Wiki:
         # A rollout keeps every file beside .env. A single-wiki checkout keeps
         # .env at the repo root and the other files under deploy/.
         base = ROOT / "deploy" if env_file.parent == ROOT else env_file.parent
+        self.base = base
         self.state_file = base / "state.env"
         self.users_dir = base / "users"
         self.key_file = base / "bookstack.pem"
-        self.secret_file = base / "bookstack-s3.env"
-        self.values = load_env_file(env_file)
+        file_values = load_env_file(env_file)
+        if file_values.get("KEY_FILE"):
+            self.key_file = Path(file_values["KEY_FILE"])
+        token = file_values.get("INFISICAL_TOKEN", "") or os.environ.get("INFISICAL_TOKEN", "")
+        if not token:
+            raise RotationError(f"Set INFISICAL_TOKEN in {env_file}.")
+        try:
+            self.client = InfisicalClient.from_token(token)
+            self.values = self.client.secrets(WIKI_PATH)
+        except InfisicalError as exc:
+            raise RotationError(str(exc)) from None
+        self.values["INFISICAL_TOKEN"] = token
         self.state = load_env_file(self.state_file)
-        if self.values.get("KEY_FILE"):
-            self.key_file = Path(self.values["KEY_FILE"])
-        if self.values.get("SECRET_FILE"):
-            self.secret_file = Path(self.values["SECRET_FILE"])
 
     def require(self, *names: str, state: bool = False) -> None:
         source = self.state if state else self.values
-        label = self.state_file if state else self.env_file
+        label = str(self.state_file) if state else f"Infisical dev {WIKI_PATH}"
         missing = [name for name in names if not source.get(name)]
         if missing:
             raise RotationError(f"Set {', '.join(missing)} in {label}.")
@@ -275,9 +284,32 @@ def scp_to(wiki: Wiki, local: Path, remote: str) -> None:
 
 
 def write_private(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
         handle.write(text)
+
+
+def write_pending(path: Path, updates: dict[str, str]) -> None:
+    lines = [f"{key}={shell_quote(value)}" for key, value in updates.items()]
+    write_private(path, "\n".join(lines) + "\n")
+
+
+def commit_secrets(client: InfisicalClient, path: str, updates: dict[str, str], pending: Path) -> None:
+    """Upsert secrets and read them back. On failure, leave them in pending."""
+    try:
+        client.ensure_folder(path)
+        client.upsert(path, updates)
+        remote = client.secrets(path)
+    except InfisicalError as exc:
+        write_pending(pending, updates)
+        raise RotationError(f"Infisical did not store the new values at {path}. They were written to {pending}. {exc}") from None
+    mismatched = [key for key, value in updates.items() if remote.get(key) != value]
+    if mismatched:
+        write_pending(pending, updates)
+        raise RotationError(
+            f"Infisical read-back mismatch at {path} for {', '.join(mismatched)}. Values were written to {pending}."
+        )
 
 
 def public_key(private_key: Path) -> str:
@@ -452,13 +484,9 @@ def push_s3_env(wiki: Wiki, key_id: str, secret: str) -> None:
 
 
 def rotate_s3(wiki: Wiki) -> None:
-    wiki.require("BUCKET", "IAM_USER")
+    wiki.require("BUCKET", "IAM_USER", "STORAGE_S3_KEY", "STORAGE_S3_SECRET")
     wiki.require("EIP", state=True)
-    if not wiki.secret_file.is_file():
-        raise RotationError(f"Attachment key file not found: {wiki.secret_file}")
-    previous = load_env_file(wiki.secret_file)
-    if not previous.get("STORAGE_S3_KEY") or not previous.get("STORAGE_S3_SECRET"):
-        raise RotationError(f"{wiki.secret_file} is missing STORAGE_S3_KEY or STORAGE_S3_SECRET.")
+    previous = {"STORAGE_S3_KEY": wiki.values["STORAGE_S3_KEY"], "STORAGE_S3_SECRET": wiki.values["STORAGE_S3_SECRET"]}
     user = wiki.values.get("IAM_USER", "bookstack-attachments")
     created = aws(wiki, ["iam", "create-access-key", "--user-name", user, "--output", "json"])
     data = json.loads(created.stdout)["AccessKey"]
@@ -486,16 +514,21 @@ def rotate_s3(wiki: Wiki) -> None:
     unit = ssh(wiki, "systemctl list-units --type=service --no-legend --plain 'php*-fpm.service' | awk 'NR==1 {print $1}'")
     service = unit.stdout.strip()
     if not service:
-        raise RotationError("php-fpm is not running. The instance is on the new key and the local file is not.")
+        raise RotationError("php-fpm is not running. The instance is on the new key and Infisical was not updated.")
     restarted = ssh(wiki, f"sudo systemctl restart {shlex.quote(service)} && systemctl is-active {shlex.quote(service)}")
     if "active" not in restarted.stdout:
-        raise RotationError("php-fpm did not return. The instance is on the new key and the local file is not.")
-    replace_env_keys(wiki.secret_file, {"STORAGE_S3_KEY": key_id, "STORAGE_S3_SECRET": secret})
+        raise RotationError("php-fpm did not return. The instance is on the new key and Infisical was not updated.")
+    commit_secrets(
+        wiki.client,
+        WIKI_PATH,
+        {"STORAGE_S3_KEY": key_id, "STORAGE_S3_SECRET": secret},
+        wiki.base / "pending-s3.env",
+    )
     aws(wiki, ["iam", "delete-access-key", "--user-name", user, "--access-key-id", previous["STORAGE_S3_KEY"]])
     remaining = aws(wiki, ["iam", "list-access-keys", "--user-name", user, "--output", "json"])
     ids = [item["AccessKeyId"] for item in json.loads(remaining.stdout)["AccessKeyMetadata"]]
     if ids != [key_id]:
-        raise RotationError("The attachment user does not have exactly the new access key. The local file has the new secret.")
+        raise RotationError("The attachment user does not have exactly the new access key. Infisical dev /wiki has the new secret.")
     print(f"attachment key replaced; live key ends {key_id[-4:]}")
 
 
@@ -526,7 +559,7 @@ def rotate_admin(wiki: Wiki) -> None:
     rows = run_user_php(wiki, [{"email": email, "password": password, "rotate_token": False}])
     if len(rows) != 1 or not rows[0].get("ok"):
         raise RotationError(f"Admin password was not changed: {rows[0].get('error', 'no result') if rows else 'no result'}")
-    replace_env_keys(wiki.env_file, {"ADMIN_PASSWORD": password})
+    commit_secrets(wiki.client, WIKI_PATH, {"ADMIN_PASSWORD": password}, wiki.base / "pending-admin.env")
     confirm_admin_login(wiki, email, password)
     print(f"admin password replaced for {email}")
 
@@ -539,82 +572,6 @@ def confirm_admin_login(wiki: Wiki, email: str, password: str) -> None:
     spec.loader.exec_module(module)
     web = module.Web(wiki_url(wiki.values, wiki.state))
     module.login(web, email, password)
-
-
-class Infisical:
-    def __init__(self, token: str, project_id: str):
-        self.token = token
-        self.project_id = project_id
-
-    def request(self, method: str, path: str, query: dict | None = None, body: dict | None = None) -> dict:
-        url = INFISICAL_API + path
-        if query:
-            url += "?" + urllib.parse.urlencode(query)
-        data = None if body is None else json.dumps(body).encode()
-        headers = {"Authorization": f"Bearer {self.token}", "Accept": "application/json"}
-        if data is not None:
-            headers["Content-Type"] = "application/json"
-        request = urllib.request.Request(url, data=data, headers=headers, method=method)
-        try:
-            with urllib.request.urlopen(request, timeout=60) as response:
-                raw = response.read().decode()
-        except urllib.error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", "replace")[:180].replace("\n", " ")
-            raise RotationError(f"Infisical {method} {path} failed ({exc.code}): {detail}") from None
-        return json.loads(raw) if raw else {}
-
-    @classmethod
-    def from_token(cls, token: str, expected_project: str = "") -> Infisical:
-        client = cls(token, "")
-        payload = client.request("GET", "/api/v2/service-token")
-        project = service_token_project(payload)
-        if expected_project and expected_project != project:
-            raise RotationError("INFISICAL_PROJECT_ID does not match the service token's project.")
-        client.project_id = project
-        return client
-
-    def folders(self) -> list[str]:
-        payload = self.request(
-            "GET",
-            "/api/v2/folders",
-            {"projectId": self.project_id, "environment": "dev", "path": "/users"},
-        )
-        return [folder["name"] for folder in payload.get("folders", [])]
-
-    def secrets(self, folder: str) -> dict[str, str]:
-        payload = self.request(
-            "GET",
-            "/api/v4/secrets",
-            {
-                "projectId": self.project_id,
-                "environment": "dev",
-                "secretPath": f"/users/{folder}",
-                "viewSecretValue": "true",
-                "expandSecretReferences": "false",
-                "includeImports": "false",
-                "recursive": "false",
-            },
-        )
-        found = {}
-        for item in payload.get("secrets") or []:
-            key = item.get("secretKey")
-            value = item.get("secretValue")
-            if isinstance(key, str) and isinstance(value, str):
-                found[key] = value
-        return found
-
-    def upsert(self, folder: str, pending: dict[str, str]) -> None:
-        self.request(
-            "PATCH",
-            "/api/v4/secrets/batch",
-            body={
-                "projectId": self.project_id,
-                "environment": "dev",
-                "secretPath": f"/users/{folder}",
-                "mode": "upsert",
-                "secrets": [{"secretKey": key, "secretValue": value} for key, value in pending.items()],
-            },
-        )
 
 
 def local_files_by_email(users_dir: Path) -> dict[str, Path]:
@@ -656,28 +613,26 @@ def prepare_user(record: dict) -> dict:
     return item
 
 
-def sync_rotated_user(client: Infisical | None, item: dict, users_dir: Path, files: dict[str, Path]) -> None:
+def sync_rotated_user(client: InfisicalClient | None, item: dict, users_dir: Path, files: dict[str, Path]) -> None:
     email = item["email"]
     token_id = item.get("token_id", "")
     token_secret = item.get("token_secret", "")
-    if item.get("folder") and client is not None and token_id:
-        pending = {
-            "PASSWORD": item["password"],
-            "TOKEN_ID": token_id,
-            "TOKEN_SECRET": token_secret,
-            "AUTHORIZATION": f"Token {token_id}:{token_secret}",
-        }
-        client.upsert(item["folder"], pending)
-        remote = client.secrets(item["folder"])
-        for key, value in pending.items():
-            if remote.get(key) != value:
-                raise RotationError(f"Infisical read-back mismatch for {item['folder']} field {key}.")
     path = files.get(email.lower())
-    if path is not None:
-        update_local_user(path, item["password"], token_id, token_secret)
+    if not (item.get("folder") and client is not None):
+        return
+    pending = {"PASSWORD": item["password"]}
+    if token_id and token_secret:
+        pending["TOKEN_ID"] = token_id
+        pending["TOKEN_SECRET"] = token_secret
+        pending["AUTHORIZATION"] = f"Token {token_id}:{token_secret}"
+    secret_path = f"{USERS_PATH}/{item['folder']}"
+    fallback = path or users_dir / f"{email}.env"
+    commit_secrets(client, secret_path, pending, fallback)
+    if path is not None and path.is_file():
+        path.unlink()
 
 
-def rotate_user_records(wiki: Wiki, client: Infisical | None, records: list[dict]) -> tuple[list[str], list[dict]]:
+def rotate_user_records(wiki: Wiki, client: InfisicalClient | None, records: list[dict]) -> tuple[list[str], list[dict]]:
     """Rotate records. Returns (failure messages, prepared items that were emailed-ready)."""
     if not records:
         return [], []
@@ -724,10 +679,17 @@ def token_works(wiki: Wiki, token_id: str, token_secret: str) -> bool:
         return False
 
 
-def infisical_records(client: Infisical, pilot: str) -> list[dict]:
+def infisical_records(client: InfisicalClient, pilot: str) -> list[dict]:
     records = []
-    for folder in client.folders():
-        values = client.secrets(folder)
+    try:
+        folders = client.folder_names(USERS_PATH)
+    except InfisicalError as exc:
+        raise RotationError(str(exc)) from None
+    for folder in folders:
+        try:
+            values = client.secrets(f"{USERS_PATH}/{folder}")
+        except InfisicalError as exc:
+            raise RotationError(str(exc)) from None
         email = values.get("EMAIL", "")
         user_id = values.get("USER_ID", "")
         if not email or not str(user_id).isdigit():
@@ -751,10 +713,7 @@ def infisical_records(client: Infisical, pilot: str) -> list[dict]:
 
 
 def rotate_infisical(wiki: Wiki, pilot: str) -> None:
-    token = wiki.values.get("INFISICAL_TOKEN", "")
-    if not token:
-        raise RotationError(f"Set INFISICAL_TOKEN in {wiki.env_file}.")
-    client = Infisical.from_token(token, wiki.values.get("INFISICAL_PROJECT_ID", ""))
+    client = wiki.client
     records = infisical_records(client, pilot)
     if not records:
         raise RotationError("Infisical /users has no folders.")
@@ -824,11 +783,15 @@ def rotate_humans(wiki: Wiki, emails: list[str]) -> None:
     host = wiki.state.get("HOST") or urllib.parse.urlparse(url).netloc
     files = local_files_by_email(wiki.users_dir)
     for person in done:
-        # Write the password before sending. A mail failure then still leaves a copy.
-        update_local_user(
-            files.get(person["email"].lower()) or wiki.users_dir / f"{person['email']}.env",
-            person["password"],
-        )
+        # Store the password before sending. A mail failure then still leaves a copy.
+        folder = human_folder(person["email"])
+        pending = files.get(person["email"].lower()) or wiki.users_dir / f"{person['email']}.env"
+        fields = {"EMAIL": person["email"], "PASSWORD": person["password"]}
+        if person.get("name"):
+            fields["NAME"] = person["name"]
+        commit_secrets(wiki.client, f"{HUMANS_PATH}/{folder}", fields, pending)
+        if pending.is_file():
+            pending.unlink()
         first = (person.get("name") or person["email"]).split()[0]
         text = email_text(first, url, person["email"], person["password"], signoff(sender))
         email_id = send_email(
@@ -850,15 +813,11 @@ def dry_run(wiki: Wiki, humans: list[str], pilot: str) -> None:
     if wiki.state.get("INSTANCE_ID") and wiki.values.get("AWS_PROFILE"):
         ids = instance_ids_for_key(wiki)
         print("instances " + (", ".join(ids) or "none"))
-    if wiki.values.get("INFISICAL_TOKEN"):
-        client = Infisical.from_token(wiki.values["INFISICAL_TOKEN"], wiki.values.get("INFISICAL_PROJECT_ID", ""))
-        records = infisical_records(client, pilot)
-        print(f"infisical users {len(records)} project {client.project_id}")
-        for record in records:
-            token = "token" if record["rotate_token"] else "password-only"
-            print(f"  {record['folder']} {record['email']} {token}")
-    else:
-        print("infisical token not set")
+    records = infisical_records(wiki.client, pilot)
+    print(f"infisical users {len(records)} project {wiki.client.project_id}")
+    for record in records:
+        token = "token" if record["rotate_token"] else "password-only"
+        print(f"  {record['folder']} {record['email']} {token}")
     if humans:
         print("humans " + ", ".join(humans))
     else:
@@ -890,8 +849,8 @@ def main(argv: list[str] | None = None) -> None:
     env_file = resolve_env_file(args.env_file)
     if not env_file.is_file():
         die(f"Env file not found: {env_file}")
-    wiki = Wiki(env_file)
     try:
+        wiki = Wiki(env_file)
         if args.dry_run:
             dry_run(wiki, args.human, args.pilot)
             return

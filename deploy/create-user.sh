@@ -2,7 +2,7 @@
 # Create a BookStack user and API token over HTTPS (default flow).
 #
 # Drives the same admin web routes a browser uses, so it needs only the site
-# URL and the admin credentials from .env. No SSH, AWS, or instance access.
+# URL and the admin credentials from Infisical dev /wiki. No SSH, AWS, or instance access.
 # The SSH/PHP fallback is deploy/create-user-ssh.sh.
 #
 # Usage:
@@ -11,9 +11,9 @@
 #   bash deploy/create-user.sh --name "Pi Agent" --email "pi-agent@example.com" --identity pi-agent
 #   bash deploy/create-user.sh --sync-role
 #
-# Credentials are printed once and written to deploy/users/ (gitignored).
-# --identity also syncs them to Infisical at dev /users/<folder>.
-# Each dot in the slug becomes a hyphen in that folder name.
+# Credentials are printed once. --identity stores them in Infisical at
+# dev /users/<folder>. Each dot in the slug becomes a hyphen in that folder
+# name. A failed Infisical write leaves a file under deploy/users/.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT="$HERE/create-user-http.py"

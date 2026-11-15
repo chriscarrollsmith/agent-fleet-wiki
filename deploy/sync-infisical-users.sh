@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
 # Push BookStack user credentials from deploy/users to Infisical.
 #
-# The local file is the source. Matching remote values are left unchanged.
-# INFISICAL_CLIENT_ID, INFISICAL_CLIENT_SECRET, and INFISICAL_PROJECT_ID come
-# from the process environment, or from .env when the environment does not set
-# them. The client id and secret belong to a machine identity created under
-# the project's Access Control.
+# Matching remote values are left unchanged. A successful upload removes the
+# local file. INFISICAL_TOKEN comes from the process environment, or from .env
+# when the environment does not set it. The token is a service token.
 #
 # Usage:
 #   bash deploy/sync-infisical-users.sh --identity pi-agent --file deploy/users/pi@example.com.env

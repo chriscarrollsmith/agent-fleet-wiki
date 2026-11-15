@@ -51,7 +51,7 @@ class InfisicalHandler(BaseHTTPRequestHandler):
     folders: set[str] = set()
     secrets: dict[str, dict[str, str]] = {}
     calls: list[tuple[str, str, dict]] = []
-    token = "test-token"
+    token = "st.test"
 
     def log_message(self, fmt: str, *args) -> None:
         return
@@ -72,14 +72,11 @@ class InfisicalHandler(BaseHTTPRequestHandler):
         body = json.loads(raw) if raw else {}
         query = {key: values[-1] for key, values in urllib.parse.parse_qs(parsed.query).items()}
         self.calls.append((self.command, self.path, body))
-        if parsed.path == "/api/v1/auth/universal-auth/login":
-            if self.headers.get("Authorization"):
-                self._json(400, {"message": "login must be anonymous"})
-                return
-            self._json(200, {"accessToken": self.token})
-            return
         if self.headers.get("Authorization") != f"Bearer {self.token}":
             self._json(401, {"message": "unauthorized"})
+            return
+        if parsed.path == "/api/v2/service-token" and self.command == "GET":
+            self._json(200, {"projectId": "project-id"})
             return
         if parsed.path == "/api/v2/folders" and self.command == "GET":
             self._json(200, {"folders": [{"name": name} for name in sorted(self.folders)]})
@@ -141,14 +138,14 @@ class SyncTests(unittest.TestCase):
             path = Path(tmp) / "pi@example.com.env"
             path.write_text(credential_text(SAMPLE), encoding="utf-8")
             output = self.run_main(path, identity="pi-agent")
-            recorded = path.read_text(encoding="utf-8")
+            still_there = path.exists()
         self.assertIn("pi-agent: created /users/pi-agent", output)
         self.assertIn("wrote USER_ID", output)
         self.assertEqual(InfisicalHandler.secrets["pi-agent"], SAMPLE)
+        self.assertFalse(still_there)
         methods = [call[0] for call in InfisicalHandler.calls]
-        self.assertEqual(methods, ["POST", "GET", "POST", "PATCH"])
-        login = InfisicalHandler.calls[0][2]
-        self.assertEqual(login["clientId"], "client")
+        self.assertEqual(methods, ["GET", "GET", "POST", "PATCH"])
+        self.assertTrue(InfisicalHandler.calls[0][1].startswith("/api/v2/service-token"))
         folder_list = InfisicalHandler.calls[1][1]
         self.assertIn("projectId=project-id", folder_list)
         self.assertIn("environment=dev", folder_list)
@@ -158,7 +155,6 @@ class SyncTests(unittest.TestCase):
         self.assertEqual(upsert["mode"], "upsert")
         self.assertEqual(upsert["secretPath"], "/users/pi-agent")
         self.assertNotIn("IDENTITY", {item["secretKey"] for item in upsert["secrets"]})
-        self.assertIn("IDENTITY=pi-agent", recorded)
 
     def test_second_push_leaves_matching_secrets(self) -> None:
         InfisicalHandler.folders.add("pi-agent")
@@ -234,15 +230,16 @@ class SyncTests(unittest.TestCase):
             path = Path(tmp) / "agent@example.com.env"
             path.write_text(credential_text(SAMPLE), encoding="utf-8")
             first = self.run_main(path, identity=identity)
+            path.write_text(credential_text(SAMPLE, identity), encoding="utf-8")
             second = self.run_main(path)
-            recorded = path.read_text(encoding="utf-8")
+            still_there = path.exists()
         self.assertIn(f"{identity}: created /users/{folder}", first)
         self.assertIn(f"{identity}: already in sync", second)
         self.assertEqual(InfisicalHandler.secrets[folder], SAMPLE)
         self.assertNotIn(identity, InfisicalHandler.folders)
-        self.assertIn(f"IDENTITY={identity}", recorded)
+        self.assertFalse(still_there)
 
-    def test_missing_project_id_refuses_before_login(self) -> None:
+    def test_missing_token_refuses_before_request(self) -> None:
         with TemporaryDirectory() as tmp:
             path = Path(tmp) / "pi@example.com.env"
             path.write_text(credential_text(SAMPLE), encoding="utf-8")
@@ -256,22 +253,19 @@ class SyncTests(unittest.TestCase):
                 "--env-file",
                 str(path.with_name("missing.env")),
             ]
-            with EnvGuard(INFISICAL_CLIENT_ID="client", INFISICAL_CLIENT_SECRET="secret", INFISICAL_PROJECT_ID=""):
+            with EnvGuard(INFISICAL_TOKEN=""):
                 with contextlib.redirect_stderr(io.StringIO()):
                     with self.assertRaises(SystemExit):
                         sync.main(argv)
         self.assertEqual(InfisicalHandler.calls, [])
 
-    def test_project_id_falls_back_to_env_file(self) -> None:
+    def test_token_falls_back_to_env_file(self) -> None:
         with TemporaryDirectory() as tmp:
             env_file = Path(tmp) / ".env"
-            env_file.write_text(
-                "INFISICAL_CLIENT_ID=from-file\nINFISICAL_CLIENT_SECRET=from-file-secret\nINFISICAL_PROJECT_ID=from-file-project\n",
-                encoding="utf-8",
-            )
-            with EnvGuard(INFISICAL_CLIENT_ID="", INFISICAL_CLIENT_SECRET="", INFISICAL_PROJECT_ID=""):
-                client_id, client_secret, project_id = sync.resolve_infisical(env_file)
-        self.assertEqual((client_id, client_secret, project_id), ("from-file", "from-file-secret", "from-file-project"))
+            env_file.write_text("INFISICAL_TOKEN=st.from-file\n", encoding="utf-8")
+            with EnvGuard(INFISICAL_TOKEN=""):
+                token = sync.token_from_env(env_file)
+        self.assertEqual(token, "st.from-file")
 
     def run_main(self, path: Path, identity: str | None = None, dry_run: bool = False) -> str:
         argv = ["--file", str(path), "--api-base", self.api, "--env-file", str(path.with_name("missing.env"))]
@@ -280,11 +274,7 @@ class SyncTests(unittest.TestCase):
         if dry_run:
             argv.append("--dry-run")
         buffer = io.StringIO()
-        with EnvGuard(
-            INFISICAL_CLIENT_ID="client",
-            INFISICAL_CLIENT_SECRET="secret",
-            INFISICAL_PROJECT_ID="project-id",
-        ):
+        with EnvGuard(INFISICAL_TOKEN="st.test"):
             with contextlib.redirect_stdout(buffer):
                 sync.main(argv)
         return buffer.getvalue()

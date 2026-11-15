@@ -14,8 +14,9 @@
 #   bash deploy/create-user-ssh.sh --sync-role
 #
 # Credentials are printed once and written to deploy/users/ (gitignored).
-# This fallback does not sync Infisical. After it writes the file, run
+# This fallback does not call Infisical. After it writes the file, run
 # deploy/sync-infisical-users.sh --identity <identity> --file <that file>.
+# That command reads INFISICAL_TOKEN and removes the file after a successful upload.
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 load_env

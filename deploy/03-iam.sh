@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Create the attachment IAM user. Writes the access key once, to deploy/bookstack-s3.env.
+# Create the attachment IAM user. Stores the access key once, in Infisical dev /wiki.
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 load_env
@@ -34,21 +34,21 @@ aws iam put-user-policy --user-name "$USER_NAME" --policy-name bookstack-attachm
 EOF
 )"
 
-if [[ -f "$SECRET_FILE" ]]; then
-  echo "Access key file already exists at ${SECRET_FILE}. Not creating another key."
+if [[ -n "${STORAGE_S3_KEY:-}" ]]; then
+  echo "Attachment key already recorded in Infisical. Not creating another key."
 else
   read -r ACCESS_KEY_ID SECRET_ACCESS_KEY < <(
     aws iam create-access-key --user-name "$USER_NAME" \
       --query 'AccessKey.[AccessKeyId,SecretAccessKey]' --output text | tr -d '\r'
   )
-  umask 077
-  cat > "$SECRET_FILE" <<EOF
-STORAGE_S3_KEY=${ACCESS_KEY_ID}
-STORAGE_S3_SECRET=${SECRET_ACCESS_KEY}
-STORAGE_S3_REGION=${AWS_DEFAULT_REGION}
-STORAGE_S3_BUCKET=${BUCKET}
-EOF
-  echo "Access key written to ${SECRET_FILE}. The secret is not printed."
+  if ! printf 'STORAGE_S3_KEY=%s\nSTORAGE_S3_SECRET=%s\nSTORAGE_S3_REGION=%s\nSTORAGE_S3_BUCKET=%s\n' \
+    "$ACCESS_KEY_ID" "$SECRET_ACCESS_KEY" "$AWS_DEFAULT_REGION" "$BUCKET" | infisical_py upsert /wiki; then
+    aws iam delete-access-key --user-name "$USER_NAME" --access-key-id "$ACCESS_KEY_ID" >/dev/null
+    echo "Infisical did not confirm the access key, so the new key was deleted." >&2
+    echo "If dev /wiki has STORAGE_S3_KEY, delete that secret before running this stage again." >&2
+    exit 1
+  fi
+  echo "Access key stored in Infisical dev /wiki. The secret is not printed."
 fi
 
 echo
